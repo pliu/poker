@@ -52,26 +52,29 @@ function estimateRange(g, playerId, stats) {
   var loose = reliable ? clamp(st.vpip, 0.08, 0.88) : 0.42;
   var pfr = reliable ? clamp(st.pfr, 0.025, loose) : 0.18;
   var story = preflopStory(g, playerId);
+  var position = g.positionOf ? g.positionOf(playerId) : "unknown position";
+  var positionFactor = position === "Button" ? 1.28
+    : position === "Cutoff" ? 1.10
+    : position === "Small Blind" ? 1.05
+    : position === "Big Blind" ? 0.92
+    : 0.82;
   var hi, why;
   if (!story.acted && g.stage === "preflop") {
     hi = 1; why = "has not acted yet";
   } else if (story.raised) {
-    hi = clamp(pfr * 1.25 * (story.raised >= 2 ? 0.55 : 1), 0.035, 0.55);
-    why = story.raised >= 2 ? "re-raised preflop" : "raised preflop";
+    hi = clamp(pfr * 1.25 * (story.raised >= 2 ? 0.55 : positionFactor), 0.035, 0.55);
+    why = (story.raised >= 2 ? "re-raised preflop" : "raised preflop") + " from " + position;
   } else if (story.calledRaise) {
-    hi = clamp(loose * 1.05, 0.12, 0.88); why = "called a preflop raise";
+    hi = clamp(loose * (position === "Big Blind" ? 1.18 : 0.92), 0.12, 0.88);
+    why = "called a preflop raise from " + position;
   } else if (story.limped) {
-    hi = clamp(loose, 0.12, 0.88); why = "limped preflop";
+    hi = clamp(loose * positionFactor, 0.12, 0.88); why = "limped preflop from " + position;
   } else if (story.checked) {
-    hi = 1; why = "checked the big blind";
+    hi = 1; why = "checked the big blind from " + position;
   } else {
     hi = clamp(loose, 0.18, 0.88); why = "has no recorded preflop action";
   }
 
-  var aggressive = 0;
-  (player.streetActions || []).forEach(function (a) { if (a.action === "raise") aggressive++; });
-  if (g.lastAggressor === playerId) aggressive = Math.max(aggressive, 1);
-  if (g.board.length && aggressive) why += ", then bet or raised this street";
   var observedHands = st && st.hands ? st.hands : 0;
   var source = reliable
     ? "Based on " + observedHands + " observed hands: played " + Math.round(st.vpip * 100) +
@@ -151,16 +154,26 @@ function lastAggressiveAction(g, playerId) {
 
 function conditionRange(g, range, stats, texture, observerId) {
   if (!g.board.length) return range;
-  var raised = false, called = false;
+  var raised = false, called = false, checked = false;
+  var latest = null, currentSeen = false;
   (g.history || []).forEach(function (h) {
     if (h.street === "preflop" || h.action === "deal" || !actionBelongsTo(g, h, range.id)) return;
-    if (h.action === "raise") raised = true;
-    else if (h.action === "call") called = true;
+    if (h.action !== "raise" && h.action !== "call" && h.action !== "check") return;
+    latest = h;
+    if (h.street === g.stage) currentSeen = true;
   });
   (g.players[range.id].streetActions || []).forEach(function (a) {
-    if (a.action === "raise") raised = true;
-    else if (a.action === "call") called = true;
+    if (a.action === "raise" || a.action === "call" || a.action === "check") {
+      var onCurrentStreet = !a.street || a.street === g.stage;
+      if (onCurrentStreet || !currentSeen) latest = a;
+      if (onCurrentStreet) currentSeen = true;
+    }
   });
+  if (latest) {
+    raised = latest.action === "raise";
+    called = latest.action === "call";
+    checked = latest.action === "check";
+  }
   if (raised) {
     var wager = lastAggressiveAction(g, range.id);
     var amount = wager && wager.amount > 0 ? wager.amount : Math.max(g.bb, g.currentBet || g.pot() * 0.65);
@@ -186,6 +199,12 @@ function conditionRange(g, range, stats, texture, observerId) {
     boardTop: g.stage === "river" ? 0.42 : 0.55,
     modelWhy: "then called a postflop bet"
   });
+  if (checked) return P.boardRange(range, {
+    checked: true,
+    slowplayTop: 0.16,
+    slowplayPct: clamp(0.10 + (texture.paired ? 0.05 : 0) - (texture.wet > 0.6 ? 0.03 : 0), 0.06, 0.20),
+    modelWhy: "then checked " + (currentSeen ? "this street" : "on the previous street")
+  });
   return range;
 }
 
@@ -204,10 +223,19 @@ function baseRangeSummary(spec) {
   var combos = 0;
   codes.forEach(function (code) { combos += comboWeight(code); });
   var show = Math.min(6, codes.length);
+  var representative = [];
+  if (codes.length) {
+    var repN = Math.min(6, codes.length);
+    for (var ri = 0; ri < repN; ri++) {
+      var idx = repN === 1 ? 0 : Math.round(ri * (codes.length - 1) / (repN - 1));
+      if (representative.indexOf(codes[idx]) < 0) representative.push(codes[idx]);
+    }
+  }
   return {
     classCount: codes.length, comboCount: combos,
     strongest: codes.slice(0, show),
     looseEdge: codes.length > show ? codes.slice(Math.max(show, codes.length - 6)) : [],
+    representative: representative,
     notation: "s means both cards share a suit; o means they do not; a pair such as QQ has either suit pattern"
   };
 }
@@ -252,6 +280,11 @@ function boardRangeExamples(spec, hole, board) {
   } else if (spec.boardTop !== undefined) {
     var continueN = Math.max(1, Math.round(scored.length * spec.boardTop));
     out.continues = spacedHoldingExamples(scored.slice(0, continueN), 6);
+  } else if (spec.checked) {
+    var slowN = Math.max(1, Math.min(scored.length - 1,
+      Math.round(scored.length * (spec.slowplayTop === undefined ? 0.16 : spec.slowplayTop))));
+    out.slowplays = spacedHoldingExamples(scored.slice(0, slowN), 3);
+    out.checks = spacedHoldingExamples(scored.slice(slowN), 6);
   }
   return out;
 }

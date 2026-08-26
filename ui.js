@@ -601,6 +601,9 @@ function provenanceHTML(a) {
     } else if (r.boardModel && r.boardTop !== undefined) {
       start += " Their call narrowed that to the strongest <b>" + Math.round(r.boardTop * 100) +
         "%</b> on this board.";
+    } else if (r.boardModel && r.checked) {
+      start += " Their check shifted most of the weight to medium and weak hands while retaining <b>" +
+        Math.round((r.slowplayPct || 0) * 100) + "%</b> slow-play weight from the strongest slice.";
     }
     return start + "</li>";
   });
@@ -688,6 +691,29 @@ function adjustmentHTML(a) {
     '<p>' + x.finalText + '</p></div>';
 }
 
+function teachingHTML(a) {
+  var t = a.teaching;
+  if (!t) return "";
+  var h = '<div class="card-box teach-box"><h3>' + t.title + '</h3>';
+  if (t.reads && t.reads.length) {
+    h += '<h4>1. Read the betting story</h4>' +
+      t.reads.map(function (r) { return '<p>' + r.text + '</p>'; }).join("") +
+      working("What evidence supports those reads?", t.reads.map(function (r) {
+        return '<p><b>' + r.name + ' (' + r.confidence + ' confidence):</b> ' + r.evidence + '.</p>';
+      }).join(""));
+  }
+  h += '<h4>2. Compare the alternatives</h4>' +
+    (t.comparisons || []).map(function (x) {
+      return '<div class="row"><span>' + x.label +
+        (x.note ? '<small class="line-note">' + x.note + '</small>' : '') +
+        '</span><b>' + x.value + '</b></div>';
+    }).join("") +
+    '<h4>3. Find the tipping point</h4><p class="tipline">' + t.tippingPoint + '</p>' +
+    '<h4>4. Keep the lesson</h4><p>' + t.takeaway + '</p>' +
+    '<p class="ask">' + t.question + '</p></div>';
+  return h;
+}
+
 function rangeExamplesLine(label, examples) {
   if (!examples || !examples.length) return "";
   return '<p class="examples"><b>' + label + ':</b> ' + examples.join(", ") + '.</p>';
@@ -698,12 +724,14 @@ function rangeReadHTML(r) {
   h += '<p>The starting set is the best <b>' + Math.round(r.hi * 100) + '%</b>: ' +
     (r.classCount || "?") + ' named hand classes, about ' + (r.comboCount || "?") +
     ' of the 1,326 two-card combinations before visible-card removal.</p>';
-  h += rangeExamplesLine("Strong-end examples", r.strongest);
+  h += rangeExamplesLine("Representative hands across the set", r.representative || r.strongest);
   h += rangeExamplesLine("Examples near the loose edge", r.looseEdge);
   if (r.boardExamples) {
     h += rangeExamplesLine("Possible value hands on this board", r.boardExamples.value);
     h += rangeExamplesLine("Possible bluff hands in the model", r.boardExamples.bluffs);
     h += rangeExamplesLine("Possible hands that continue on this board", r.boardExamples.continues);
+    h += rangeExamplesLine("Likely checking hands on this board", r.boardExamples.checks);
+    h += rangeExamplesLine("Strong hands retained as possible traps", r.boardExamples.slowplays);
   }
   if (r.boardModel && r.bluffPct !== undefined) {
     h += '<p>The bet model mixes its strongest <b>' + Math.round(r.valueTop * 100) +
@@ -712,10 +740,31 @@ function rangeReadHTML(r) {
   } else if (r.boardModel && r.boardTop !== undefined) {
     h += '<p>The call model keeps the strongest <b>' + Math.round(r.boardTop * 100) +
       '%</b> of that starting set on this board.</p>';
+  } else if (r.boardModel && r.checked) {
+    h += '<p>A check does not mean “nothing.” The model puts <b>' +
+      Math.round((1 - r.slowplayPct) * 100) + '%</b> of its weight on the medium/weak part of the range and keeps <b>' +
+      Math.round(r.slowplayPct * 100) + '%</b> on possible slow-plays from the strongest ' +
+      Math.round(r.slowplayTop * 100) + '%.</p>';
   }
   h += '<p><b>Evidence (' + (r.confidence || "low") + ' confidence):</b> ' +
     (r.source || "No reliable observed sample; defaults are being used") + '.</p>';
   return h + '</div>';
+}
+
+function duplicateRangeExplanation(reads) {
+  var groups = {};
+  (reads || []).forEach(function (r) {
+    var key = [Math.round(r.hi * 1000), !!r.boardModel,
+      Math.round((r.bluffPct || 0) * 1000), Math.round((r.boardTop || 0) * 1000),
+      !!r.checked].join(":");
+    (groups[key] || (groups[key] = [])).push(r.name);
+  });
+  var same = [];
+  Object.keys(groups).forEach(function (k) { if (groups[k].length > 1) same.push(groups[k]); });
+  if (!same.length) return "";
+  return "<p style='margin-top:9px;font-size:11.5px;color:var(--dim)'><b>Why some rows match:</b> " +
+    same.map(function (names) { return names.join(" and "); }).join("; ") +
+    " currently have the same observed action and no reliable individual sample to separate them, so the model intentionally gives them the same read.</p>";
 }
 
 function showCoach(a) {
@@ -735,6 +784,8 @@ function showCoach(a) {
        (a.plain ? '<p class="plain">' + a.plain + "</p>" : "") +
        '<h3 style="margin-top:12px">Why</h3>' +
        a.why.map(function (w) { return "<p>" + w + "</p>"; }).join("") + "</div>";
+
+  h += teachingHTML(a);
 
   // how often you win, against what you need
   if (a.street !== "preflop") {
@@ -835,6 +886,7 @@ function showCoach(a) {
   if (rangeReads && rangeReads.length) {
     h += '<div class="card-box"><h3>What they might be holding</h3>' +
       rangeReads.map(rangeReadHTML).join("") +
+      duplicateRangeExplanation(rangeReads) +
       "<p style='margin-top:10px;font-size:11.5px;color:var(--dim)'>These are examples from the exact sets sampled, not a claim about two specific cards. " +
       "Visible cards and your hand remove impossible combinations. In the notation above, <b>s</b> means suited and <b>o</b> means offsuit.</p></div>";
   }
@@ -1048,7 +1100,7 @@ function transcript() {
            (pv.margin * 100).toFixed(1) + " points), assuming these opponent ranges:";
       pv.ranges.forEach(function (r) {
         t += "\n    " + r.name + ": top " + Math.round(r.hi * 100) + "% (" + r.why + ")" +
-             "; strong examples " + (r.strongest || []).join(", ") +
+             "; representative examples " + (r.representative || r.strongest || []).join(", ") +
              (r.looseEdge && r.looseEdge.length ? "; loose-edge examples " + r.looseEdge.join(", ") : "") +
              "; evidence: " + (r.source || "default assumptions");
         if (r.boardExamples && r.boardExamples.value)
@@ -1072,6 +1124,9 @@ function transcript() {
     if (pending.adjustment)
       t += "\n  Opponent adjustment: " + pending.adjustment.status + ". " +
            pending.adjustment.reason + " Final source: " + pending.adjustment.finalSource + ".";
+    if (pending.teaching)
+      t += "\n  Teaching point: " + pending.teaching.tippingPoint + " " +
+           pending.teaching.takeaway;
     if (pending.bluff)
       t += "\n  Bluff maths: fold equity " + Math.round(pending.bluff.foldEquity * 100) +
            "%, break-even " + Math.round(pending.bluff.breakEven * 100) +

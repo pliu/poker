@@ -1,7 +1,7 @@
 /* strategy.js — orchestration only. It creates one shared context, obtains the
    practical recommendation and balanced reference independently, asks the
    opponent model to explain deviations, and packages the final decision. */
-var StrategyEngine = (function (D, C, S, X) {
+var StrategyEngine = (function (D, C, S, X, T) {
 "use strict";
 
 function withContext(opts, context) {
@@ -39,6 +39,7 @@ function advise(g, heroId, opts) {
   };
   practical.solver = baseline;
   practical.adjustment = adjustment;
+  practical.teaching = T.build(context, practical, baseline, adjustment);
   practical.strategy = {
     layers: [
       { name: "range-inference", status: "complete" },
@@ -58,5 +59,5 @@ function advise(g, heroId, opts) {
 }
 
 return { advise: advise, buildContext: D.build };
-})(DecisionContext, Coach, SolverBaseline, ExploitModel);
+})(DecisionContext, Coach, SolverBaseline, ExploitModel, TeachingModel);
 if (typeof module === "object" && module.exports) module.exports = StrategyEngine;

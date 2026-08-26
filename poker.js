@@ -245,6 +245,9 @@ function boardRange(base, opts) {
     bluffPct: opts.bluffPct,
     valueTop: opts.valueTop,
     bluffBottom: opts.bluffBottom,
+    checked: opts.checked,
+    slowplayTop: opts.slowplayTop,
+    slowplayPct: opts.slowplayPct,
     modelWhy: opts.modelWhy,
     isBoardModel: true
   };
@@ -281,6 +284,20 @@ function makeRangeSampler(pool, board, spec, memo) {
     return { groups: [
       { p: 1 - bluffPct, combos: ordered.slice(0, valueN) },
       { p: bluffPct, combos: ordered.slice(bluffStart) }
+    ] };
+  }
+  if (spec.checked) {
+    // A check is weighted toward medium and weak hands but cannot erase traps.
+    // Keep a small, explicit slow-play component rather than treating every
+    // checker as either completely capped or still holding an unchanged range.
+    var slowTop = Math.max(0.03, Math.min(0.40,
+      spec.slowplayTop === undefined ? 0.16 : spec.slowplayTop));
+    var slowPct = Math.max(0.02, Math.min(0.40,
+      spec.slowplayPct === undefined ? 0.12 : spec.slowplayPct));
+    var slowN = Math.max(1, Math.min(ordered.length - 1, Math.round(ordered.length * slowTop)));
+    return { groups: [
+      { p: slowPct, combos: ordered.slice(0, slowN) },
+      { p: 1 - slowPct, combos: ordered.slice(slowN) }
     ] };
   }
   var top = Math.max(0.01, Math.min(1, spec.boardTop === undefined ? 1 : spec.boardTop));

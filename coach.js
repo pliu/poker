@@ -119,11 +119,15 @@ function simProvenance(eqRes, ranges, board, iters, hole) {
                observedHands: explained.observedHands,
                classCount: explained.classCount, comboCount: explained.comboCount,
                strongest: explained.strongest, looseEdge: explained.looseEdge,
+               representative: explained.representative,
                notation: explained.notation, boardExamples: explained.boardExamples,
                boardModel: !!(r && r.isBoardModel),
                bluffPct: r && r.isBoardModel ? r.bluffPct : undefined,
                valueTop: r && r.isBoardModel ? r.valueTop : undefined,
                bluffBottom: r && r.isBoardModel ? r.bluffBottom : undefined,
+               checked: r && r.isBoardModel ? r.checked : undefined,
+               slowplayTop: r && r.isBoardModel ? r.slowplayTop : undefined,
+               slowplayPct: r && r.isBoardModel ? r.slowplayPct : undefined,
                boardTop: r && r.isBoardModel ? r.boardTop : undefined };
     })
   };
@@ -852,10 +856,12 @@ function advisePreflop(g, heroId, opts) {
   var r = {
     street: "preflop", action: action, raiseTo: raiseTo, headline: headline, cls: cls,
     plain: plain, why: why, code: code, handPct: hp, position: pos,
+    openThreshold: openThreshold,
     equity: eq, decisionEq: eq, provenance: prov, ranges: ranges,
     decisionOpponents: nDecision,
     pot: decisionPot, totalPot: lg.pot, toCall: lg.toCall,
     potOddsNeeded: potOdds, isBluff: isBluff, isSteal: isSteal,
+    facingRaise: facingRaise,
     spec: spec, implied: implied,
     isSpeculative: !!(action === "call" && spec && /set mine|speculative/.test(headline)),
     stats: [

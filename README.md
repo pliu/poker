@@ -51,6 +51,7 @@ reasoning for a set of textbook spots so you can read it and disagree.
 | `context.js`   | The shared decision snapshot and external-solver serialization boundary. Pure. |
 | `coach.js`     | Practical fallback advice, price/EV arithmetic, bluff-catching, and compatibility exports. Pure. |
 | `solver.js`    | Independent equilibrium baseline for supported heads-up river abstractions. Pure. |
+| `teaching.js`  | Spot-specific hand stories, alternative-line comparisons, tipping points, and reusable lessons. Pure. |
 | `strategy.js`  | Orchestrates context → coach/baseline → opponent adjustment → final explanation. Pure. |
 | `bots.js`      | Opponent AI and the observed-stats tracker. Pure. |
 | `ui.js`        | Rendering, event animation, the action feed, the chat client. |
@@ -125,6 +126,24 @@ balanced layer was supported, whether an opponent adjustment was made, and
 whether the practical coach was used as a fallback. Compatibility exports on
 `Coach` keep existing bot and test callers working while the implementations
 remain separated.
+
+The **What they might be holding** panel now samples representative hands from
+across each inferred set rather than repeatedly displaying only premium hands.
+The set responds to position, observed player tendencies, and the latest action.
+A check shifts most weight toward medium and weak holdings while preserving a
+small, explicit slow-play component; the panel names examples of both. When two
+players genuinely have the same evidence, it says why their rows match instead
+of implying false precision.
+
+The **Learn from this spot** card is produced separately from action selection.
+It turns the current calculation into four concrete teaching steps: read the
+opponent's line using named example holdings, compare available actions in chips,
+find the numerical boundary that would reverse the decision, and retain one rule
+for similar future hands. River bluff-catches solve for the minimum bluff share
+directly; value/trap spots rank full bet, small bet, and check/call by modeled
+chip return. The card also poses the specific range question the player should
+ask before acting, rather than merely repeating “bet strong hands” or “fold weak
+hands.”
 
 The **Lessons** tab is split into four short reads — *Start here*, *The money*,
 *Bluffing*, *Reading people* — starting from what the game is and how a hand runs,

@@ -16,6 +16,7 @@ load('context.js');
 load('coach.js');
 load('solver.js');
 load('bots.js');
+load('teaching.js');
 load('strategy.js');
 
 var pass = 0, fail = 0, failures = [];
@@ -1311,6 +1312,23 @@ section("solver overlay — honest river abstraction");
      orchestrated.strategy.final.action === orchestrated.action &&
      !!orchestrated.strategy.final.source && !!orchestrated.adjustment,
      JSON.stringify(orchestrated.strategy.final));
+  ok("teaching layer names concrete value or bluff holdings from this board",
+     orchestrated.teaching && orchestrated.teaching.reads.length === 1 &&
+     /(value examples|bluff examples)/.test(orchestrated.teaching.reads[0].text) &&
+     /→/.test(orchestrated.teaching.reads[0].text),
+     JSON.stringify(orchestrated.teaching));
+  ok("teaching layer compares fold and call in chips",
+     orchestrated.teaching.comparisons.some(function (x) { return x.label === "Fold" && x.ev === 0; }) &&
+     orchestrated.teaching.comparisons.some(function (x) { return x.label === "Call" && isFinite(x.ev); }),
+     JSON.stringify(orchestrated.teaching.comparisons));
+  ok("river teaching exposes the bluff-frequency tipping point",
+     /breaks even when roughly \d+%/.test(orchestrated.teaching.tippingPoint) &&
+     /currently assumes \d+%/.test(orchestrated.teaching.tippingPoint),
+     orchestrated.teaching.tippingPoint);
+  ok("teaching ends with a transferable rule and a decision question",
+     /^Reusable rule:/.test(orchestrated.teaching.takeaway) &&
+     /^Ask yourself:/.test(orchestrated.teaching.question),
+     JSON.stringify(orchestrated.teaching));
 
   var fallback = StrategyEngine.advise(earlier, 0, {
     iters: 300, rng: Poker.mulberry32(24)
@@ -1318,6 +1336,56 @@ section("solver overlay — honest river abstraction");
   eq("unsupported solver coverage becomes an explicit practical fallback",
      fallback.adjustment.status, "fallback");
   eq("fallback final source is recorded", fallback.strategy.final.source, "coach-fallback");
+
+  var preflop = mkGame([2000, 2000, 2000, 2000], 0, 83).startHand();
+  preflop.players[0].hole = H("As Kh"); preflop.actionOn = 0;
+  var preflopLesson = StrategyEngine.advise(preflop, 0, {
+    iters: 400, rng: Poker.mulberry32(25)
+  });
+  ok("preflop teaching compares the hand with this seat's opening boundary",
+     preflopLesson.openThreshold > 0 &&
+     preflopLesson.teaching.comparisons.some(function (x) { return x.label === "Hands played from this seat"; }) &&
+     /opening boundary/.test(preflopLesson.teaching.tippingPoint),
+     JSON.stringify(preflopLesson.teaching));
+
+  var fullSummary = RangeModel.baseRangeSummary({ lo: 0, hi: 1 });
+  ok("range summaries show hands across the set instead of repeating only premiums",
+     fullSummary.representative.length >= 5 &&
+     fullSummary.representative.join(",") !== fullSummary.strongest.join(",") &&
+     fullSummary.representative[fullSummary.representative.length - 1] === "72o",
+     JSON.stringify(fullSummary));
+
+  (function positionChangesOpeningRead() {
+    function atPosition(position, button) {
+      var g = mkGame([2000, 2000, 2000, 2000], button, 91).startHand();
+      var p = g.players.filter(function (x) { return g.positionOf(x.id) === position; })[0];
+      p.streetActions = [{ action: "raise", street: "preflop", amount: 60 }];
+      g.currentBet = 60;
+      return RangeModel.estimateRange(g, p.id, null);
+    }
+    var buttonRaise = atPosition("Button", 0);
+    var blindRaise = atPosition("Big Blind", 0);
+    ok("late-position raises infer a wider range than big-blind raises",
+       buttonRaise.hi > blindRaise.hi && /from Button/.test(buttonRaise.why) &&
+       /from Big Blind/.test(blindRaise.why),
+       JSON.stringify({ button: buttonRaise, blind: blindRaise }));
+  })();
+
+  (function checksChangeTheRange() {
+    var g = riverSpot(false, false);
+    var check = { action: "check", street: "river", player: "Opponent", playerId: 1 };
+    g.players[1].streetActions = [check]; g.history.push(check);
+    var base = RangeModel.estimateRange(g, 1, null);
+    var conditioned = RangeModel.conditionRange(g, base, null, Poker.boardTexture(g.board), 0);
+    var explained = RangeModel.explainRange(conditioned, g.players[0].hole, g.board);
+    ok("a postflop check now changes the sampled distribution",
+       conditioned.isBoardModel && conditioned.checked && conditioned.slowplayPct > 0,
+       JSON.stringify(conditioned));
+    ok("checked ranges show both ordinary checks and possible slow-plays",
+       explained.boardExamples && explained.boardExamples.checks.length > 0 &&
+       explained.boardExamples.slowplays.length > 0,
+       JSON.stringify(explained));
+  })();
 })();
 
 section("play-by-play transcript");

@@ -3,7 +3,7 @@ ObjC.import('Foundation');
 function slurp(p){return ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError($(p).stringByStandardizingPath,$.NSUTF8StringEncoding,null));}
 var ROOT=$.NSFileManager.defaultManager.currentDirectoryPath.js;
 function load(f){(0,eval)(slurp(ROOT+'/'+f));}
-load('poker.js');load('ranges.js');load('exploit.js');load('context.js');load('coach.js');load('solver.js');load('bots.js');load('strategy.js');
+load('poker.js');load('ranges.js');load('exploit.js');load('context.js');load('coach.js');load('solver.js');load('bots.js');load('teaching.js');load('strategy.js');
 function C(s){return {r:"23456789TJQKA".indexOf(s[0])+2,s:"shdc".indexOf(s[1])};}
 function H(s){return s.trim().split(/\s+/).map(C);}
 

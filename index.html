@@ -298,6 +298,14 @@ details.working[open] > summary::before { content:"\2715"; border-color:#4d7a5c;
 .model-warning { border-left-color:var(--blue); }
 .solver-card { border-left-color:var(--violet); }
 .solver-card .rec { font-size:19px; }
+.teach-box { border-left-color:var(--gold); }
+.teach-box h4 { color:var(--gold); font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+  margin:11px 0 4px; }
+.teach-box h4:first-of-type { margin-top:2px; }
+.teach-box .tipline { background:#0e2017; border:1px solid var(--line); border-radius:7px;
+  padding:8px 9px; margin:7px 0; color:var(--text); }
+.teach-box .ask { color:var(--gold); font-weight:650; }
+.teach-box .line-note { color:var(--dim); font-size:10.5px; display:block; margin-top:-2px; }
 
 /* jargon tooltips */
 .gl { font-style:normal; border-bottom:1px dotted var(--muted); cursor:help; }
@@ -596,6 +604,7 @@ kbd { background:#08120d; border:1px solid var(--line); border-bottom-width:2px;
 <script src="coach.js"></script>
 <script src="solver.js"></script>
 <script src="bots.js"></script>
+<script src="teaching.js"></script>
 <script src="strategy.js"></script>
 <script src="ui.js"></script>
 </body>
