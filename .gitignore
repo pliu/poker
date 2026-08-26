@@ -1,0 +1,19 @@
+.DS_Store
+
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+
+# Editor metadata
+.idea/
+.vscode/

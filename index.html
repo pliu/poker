@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hold'em Coach</title>
+<style>
+:root {
+  --felt:#1b6b45; --felt-2:#0e3f28; --rail:#3a2a1c; --rail-2:#553d28;
+  --bg:#0a1410; --panel:#0f1c16; --panel-2:#15281f; --line:#22402f;
+  --text:#e9f1ec; --muted:#8ea89a; --dim:#5f7a6c;
+  --gold:#e9c46a; --green:#5fd39a; --blue:#7fb8ff; --red:#f2705f; --violet:#c39bf0;
+  --shadow:0 10px 30px rgba(0,0,0,.5);
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+html,body { height:100%; }
+body {
+  background:var(--bg); color:var(--text); overflow:hidden;
+  font:14px/1.5 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  display:flex; flex-direction:column;
+}
+button { font:inherit; cursor:pointer; }
+::-webkit-scrollbar { width:9px; height:9px; }
+::-webkit-scrollbar-thumb { background:#24402f; border-radius:5px; }
+::-webkit-scrollbar-track { background:transparent; }
+
+/* ───────── header ───────── */
+header {
+  display:flex; align-items:center; justify-content:space-between; gap:16px;
+  padding:8px 14px; background:#07110d; border-bottom:1px solid var(--line); flex:none;
+}
+header h1 { font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:var(--gold); font-weight:700; white-space:nowrap; }
+header h1 span { color:var(--dim); }
+.hdr-group { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.chip-stat { font-size:12px; color:var(--muted); background:var(--panel-2); border:1px solid var(--line);
+  padding:4px 10px; border-radius:20px; white-space:nowrap; }
+.chip-stat b { color:var(--gold); }
+.btn { background:var(--panel-2); color:var(--text); border:1px solid var(--line);
+  padding:6px 13px; border-radius:7px; font-size:13px; transition:.12s; }
+.btn:hover { background:#1e3729; border-color:#345c43; }
+.btn.primary { background:var(--gold); color:#1a1206; border-color:var(--gold); font-weight:700; }
+.btn.primary:hover { background:#f3d485; }
+.toggle { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); cursor:pointer; user-select:none; }
+.toggle input { accent-color:var(--gold); }
+
+/* ───────── layout ───────── */
+main { flex:1; display:flex; min-height:0; }
+#chatPane { width:330px; flex:none; border-right:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; min-height:0; }
+#centre { flex:1; display:flex; flex-direction:column; min-width:0; padding:10px 12px 0; }
+#sidebar { width:390px; flex:none; border-left:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; min-height:0; }
+
+/* ───────── table ───────── */
+#tableWrap { flex:1; display:flex; align-items:center; justify-content:center; min-height:0; }
+#table {
+  position:relative; width:100%; height:100%; max-height:560px;
+  background:radial-gradient(ellipse 62% 68% at 50% 45%, var(--felt) 0%, var(--felt-2) 78%);
+  border-radius:46% / 40%; border:12px solid var(--rail);
+  box-shadow:inset 0 0 90px rgba(0,0,0,.55), 0 0 0 3px var(--rail-2), var(--shadow);
+}
+#table::after {
+  content:""; position:absolute; inset:14px; border-radius:46% / 40%;
+  border:1px solid rgba(255,255,255,.07); pointer-events:none;
+}
+
+/* seats */
+.seat { position:absolute; width:168px; transform:translate(-50%,-50%); text-align:center; transition:opacity .3s; }
+.seat.folded { opacity:.34; }
+.seat .plate {
+  background:rgba(6,20,14,.82); border:1px solid var(--line); border-radius:11px;
+  padding:6px 9px; backdrop-filter:blur(3px); position:relative;
+}
+.seat.acting .plate { border-color:var(--gold); box-shadow:0 0 0 2px rgba(233,196,106,.35), 0 0 22px rgba(233,196,106,.25); }
+.seat.winner .plate { border-color:var(--green); box-shadow:0 0 0 2px rgba(95,211,154,.4), 0 0 26px rgba(95,211,154,.3); }
+.seat .who { display:flex; align-items:baseline; justify-content:center; gap:6px; }
+.seat .nm { font-size:13px; font-weight:700; letter-spacing:.02em; }
+.seat .stk { font-size:15px; font-weight:700; color:var(--gold); font-variant-numeric:tabular-nums; }
+.seat .stk.short { color:var(--red); }
+.seat .cards { display:flex; justify-content:center; gap:3px; margin-bottom:5px; min-height:56px; align-items:flex-end; }
+.seat.hero .cards { min-height:76px; }
+
+/* the action badge — the thing that makes each turn obvious */
+.act-badge {
+  position:absolute; left:50%; top:-13px; transform:translateX(-50%);
+  font-size:11px; font-weight:800; letter-spacing:.07em; text-transform:uppercase;
+  padding:3px 11px; border-radius:20px; white-space:nowrap; z-index:6;
+  border:1px solid; animation:badgePop .34s cubic-bezier(.2,1.5,.4,1);
+  box-shadow:0 3px 10px rgba(0,0,0,.5);
+}
+@keyframes badgePop { 0%{transform:translateX(-50%) scale(.4);opacity:0} 60%{transform:translateX(-50%) scale(1.12)} 100%{transform:translateX(-50%) scale(1);opacity:1} }
+.a-fold  { background:#3a1f1c; border-color:#7d3a30; color:#ff9c8f; }
+.a-check { background:#17303f; border-color:#37627e; color:#9fd4ff; }
+.a-call  { background:#1a3428; border-color:#3d7355; color:#8fe4b4; }
+.a-raise { background:#4a3a12; border-color:#a7842c; color:#ffd980; }
+.a-blind { background:#2a2436; border-color:#5a4a76; color:#c9b6f0; }
+.a-allin { background:#4d1a20; border-color:#b03a48; color:#ff9aa8; animation:badgePop .34s cubic-bezier(.2,1.5,.4,1), pulseRed 1.1s infinite .34s; }
+@keyframes pulseRed { 0%,100%{box-shadow:0 3px 10px rgba(0,0,0,.5)} 50%{box-shadow:0 0 16px rgba(240,80,100,.8)} }
+
+/* thinking dots */
+.thinking { position:absolute; left:50%; top:-13px; transform:translateX(-50%); display:flex; gap:3px;
+  background:rgba(6,20,14,.9); border:1px solid var(--line); padding:5px 10px; border-radius:20px; z-index:6; }
+.thinking i { width:4px; height:4px; border-radius:50%; background:var(--gold); animation:dot 1s infinite; }
+.thinking i:nth-child(2){animation-delay:.16s} .thinking i:nth-child(3){animation-delay:.32s}
+@keyframes dot { 0%,80%,100%{opacity:.25;transform:translateY(0)} 40%{opacity:1;transform:translateY(-3px)} }
+
+/* chips wagered in front of a seat */
+.wager { position:absolute; transform:translate(-50%,-50%); display:flex; align-items:center; gap:5px;
+  background:rgba(4,14,10,.85); border:1px solid #3d6a4f; color:#d8ecdf; font-size:12px; font-weight:700;
+  padding:3px 9px 3px 5px; border-radius:16px; z-index:5; font-variant-numeric:tabular-nums;
+  animation:chipIn .28s ease-out; }
+@keyframes chipIn { from{opacity:0;transform:translate(-50%,-30%) scale(.7)} to{opacity:1;transform:translate(-50%,-50%) scale(1)} }
+.wager .disc { width:13px; height:13px; border-radius:50%; background:conic-gradient(var(--gold) 0 25%,#8a6a1e 0 50%,var(--gold) 0 75%,#8a6a1e 0);
+  border:1.5px solid #f0d894; flex:none; }
+
+.dealer { position:absolute; width:23px; height:23px; border-radius:50%; background:#f6f2e8; color:#15100a;
+  font-size:11px; font-weight:900; display:flex; align-items:center; justify-content:center;
+  transform:translate(-50%,-50%); box-shadow:0 2px 7px rgba(0,0,0,.6); z-index:7; }
+
+/* cards */
+.card { width:44px; height:62px; border-radius:6px; background:linear-gradient(#fff,#eceff2);
+  display:inline-flex; flex-direction:column; align-items:center; justify-content:center;
+  font-weight:800; font-size:16px; line-height:1; box-shadow:0 3px 8px rgba(0,0,0,.5); user-select:none;
+  position:relative; }
+.card .r { font-size:17px; } .card .s { font-size:15px; margin-top:1px; }
+.card.red { color:#cf3a2c; } .card.black { color:#161d24; }
+.card.sm { width:34px; height:48px; font-size:13px; } .card.sm .r{font-size:13px} .card.sm .s{font-size:12px}
+.card.back { background:repeating-linear-gradient(45deg,#1e3f7a 0 5px,#16305e 5px 10px); border:2px solid #f0f4f8; }
+.card.hl { outline:2.5px solid var(--gold); outline-offset:1px; box-shadow:0 0 16px rgba(233,196,106,.55); }
+.card.faded { opacity:.38; filter:saturate(.4); }
+.card.deal { animation:dealIn .32s ease-out backwards; }
+@keyframes dealIn { from{opacity:0;transform:translateY(-22px) rotate(-8deg) scale(.85)} to{opacity:1;transform:none} }
+
+/* board + pot */
+#board { position:absolute; left:50%; top:40%; transform:translate(-50%,-50%); display:flex; gap:7px; }
+.slot { width:44px; height:62px; border-radius:6px; border:1px dashed rgba(255,255,255,.13); }
+#pot { position:absolute; left:50%; top:55%; transform:translate(-50%,-50%);
+  background:rgba(3,12,8,.72); border:1px solid #3d6a4f; border-radius:20px; padding:5px 20px;
+  font-size:14px; font-weight:700; color:var(--gold); white-space:nowrap; font-variant-numeric:tabular-nums; }
+#pot small { color:var(--muted); font-weight:600; font-size:11px; letter-spacing:.06em; text-transform:uppercase; margin-right:6px; }
+
+/* the centre announcement */
+#toast { position:absolute; left:50%; top:68%; transform:translate(-50%,-50%);
+  font-size:19px; font-weight:800; text-align:center; white-space:nowrap; pointer-events:none;
+  text-shadow:0 2px 12px rgba(0,0,0,.9); z-index:9; }
+#toast.pop { animation:toastPop .4s cubic-bezier(.2,1.4,.4,1); }
+@keyframes toastPop { from{transform:translate(-50%,-50%) scale(.82);opacity:0} to{transform:translate(-50%,-50%) scale(1);opacity:1} }
+#toast .big { font-size:23px; color:var(--gold); }
+
+/* ───────── street-by-street action rows ───────── */
+#streets { flex:none; display:flex; flex-direction:column; gap:2px; padding:6px 4px 2px; }
+.srow { display:flex; align-items:center; gap:8px; min-height:25px; padding:1px 4px;
+  border-radius:6px; opacity:.4; transition:opacity .25s, background .25s; }
+.srow.done { opacity:.78; }
+.srow.live { opacity:1; background:rgba(255,255,255,.035); }
+.srow .slabel { flex:none; width:64px; font-size:9.5px; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--dim); font-weight:800; white-space:nowrap; }
+.srow.live .slabel { color:var(--gold); }
+.srow .scards { flex:none; display:flex; gap:3px; min-width:84px; }
+.srow .scards .sc { font-size:10.5px; font-weight:800; padding:1px 4px; border-radius:3px;
+  background:#f2f4f6; font-variant-numeric:tabular-nums; }
+.srow .scards .sc.red { color:#cf3a2c; } .srow .scards .sc.black { color:#161d24; }
+.srow .sacts { flex:1; min-width:0; display:flex; align-items:center; gap:6px;
+  overflow-x:auto; overflow-y:hidden; scrollbar-width:none; }
+.srow .sacts::-webkit-scrollbar { display:none; }
+.fitem { flex:none; display:flex; align-items:center; gap:5px; font-size:11px;
+  border:1px solid var(--line); border-radius:16px; padding:2px 9px; background:var(--panel-2);
+  animation:badgePop .3s cubic-bezier(.2,1.4,.4,1); white-space:nowrap; }
+.fitem .fn { font-weight:700; }
+.fitem.me { border-color:#4a6d3f; }
+.srow .arrow { color:var(--dim); flex:none; font-size:10px; }
+.fitem.fold .fa{color:#ff9c8f} .fitem.check .fa{color:#9fd4ff}
+.fitem.call .fa{color:#8fe4b4} .fitem.raise .fa{color:#ffd980} .fitem.blind .fa{color:#c9b6f0}
+.fitem.win { border-color:#4d7a3a; background:rgba(77,122,58,.2); }
+.fitem.win .fa{color:var(--green)}
+.fa { font-weight:800; letter-spacing:.04em; }
+
+/* ───────── action bar ───────── */
+#bar { flex:none; display:none; gap:9px; align-items:center; padding:10px 6px 12px; flex-wrap:wrap; }
+#bar.on { display:flex; }
+.act { padding:11px 20px; border-radius:9px; border:none; font-size:15px; font-weight:800; letter-spacing:.02em;
+  transition:transform .08s, filter .12s; }
+.act:active { transform:translateY(1px); }
+.act:hover { filter:brightness(1.12); }
+#bFold { background:#8d3226; color:#ffe4de; }
+#bCall { background:#2d7d55; color:#e8fff2; min-width:170px; }
+#bRaise { background:var(--gold); color:#1a1206; min-width:150px; }
+.act .k { opacity:.55; font-size:11px; font-weight:700; margin-left:7px; }
+#raiseBox { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+#sizers { display:flex; gap:5px; }
+.sz { background:var(--panel-2); border:1px solid var(--line); color:var(--muted); padding:6px 10px;
+  border-radius:7px; font-size:11.5px; font-weight:700; white-space:nowrap; }
+.sz:hover { color:var(--text); border-color:#3d6a4f; }
+.sz.on { background:#2a4a35; color:var(--gold); border-color:#4d7a5c; }
+#amtWrap { display:flex; align-items:center; gap:8px; }
+.amt-pre { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim); font-weight:700; }
+#amtInput {
+  width:118px; background:#08120d; border:1px solid #3d6a4f; border-radius:8px; color:var(--gold);
+  font:inherit; font-size:17px; font-weight:800; font-variant-numeric:tabular-nums;
+  padding:7px 10px; text-align:right; outline:none;
+}
+#amtInput:focus { border-color:var(--gold); box-shadow:0 0 0 2px rgba(233,196,106,.18); }
+#amtInput.bad { border-color:var(--red); color:var(--red); box-shadow:0 0 0 2px rgba(242,112,95,.15); }
+#amtHint { font-size:11px; color:var(--dim); line-height:1.35; max-width:190px; }
+#amtHint.bad { color:var(--red); }
+#coachHint { font-size:11.5px; color:var(--muted); padding:0 6px 8px; min-height:17px; }
+#coachHint b { color:var(--gold); }
+
+/* ───────── sidebar ───────── */
+.tabs { display:flex; border-bottom:1px solid var(--line); flex:none; }
+.tab { flex:1; padding:10px 4px; text-align:center; font-size:11.5px; font-weight:700; color:var(--dim);
+  letter-spacing:.06em; text-transform:uppercase; border-bottom:2px solid transparent; cursor:pointer; }
+.tab:hover { color:var(--muted); }
+.tab.on { color:var(--gold); border-bottom-color:var(--gold); background:rgba(233,196,106,.05); }
+.pane { flex:1; overflow-y:auto; padding:13px; display:none; }
+.pane.on { display:block; }
+
+.card-box { background:var(--panel-2); border:1px solid var(--line); border-left:3px solid var(--line);
+  border-radius:9px; padding:11px 13px; margin-bottom:11px; }
+.card-box h3 { font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim); margin-bottom:7px; font-weight:800; }
+.card-box p { font-size:13px; line-height:1.58; color:#d3e2d8; margin-bottom:7px; }
+.card-box p:last-child { margin-bottom:0; }
+.card-box.raise { border-left-color:var(--gold); } .card-box.call { border-left-color:var(--green); }
+.card-box.fold { border-left-color:var(--red); } .card-box.check { border-left-color:var(--blue); }
+.card-box.bluff { border-left-color:var(--violet); } .card-box.gold { border-left-color:var(--gold); }
+.rec { font-size:21px; font-weight:800; letter-spacing:.01em; margin-bottom:9px; }
+.rec.raise{color:var(--gold)} .rec.call{color:var(--green)} .rec.fold{color:var(--red)}
+.rec.check{color:var(--blue)} .rec.bluff{color:var(--violet)}
+.rec .sub { font-size:11px; text-transform:uppercase; letter-spacing:.12em; opacity:.7; display:block; margin-top:2px; }
+.row { display:flex; justify-content:space-between; gap:12px; font-size:12.5px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,.045); }
+.row:last-child { border-bottom:none; }
+.row span { color:var(--muted); } .row b { color:var(--text); font-variant-numeric:tabular-nums; text-align:right; }
+.meter { height:6px; border-radius:4px; background:#0a1a12; overflow:hidden; margin:7px 0 3px; position:relative; }
+.meter i { display:block; height:100%; border-radius:4px; }
+.meter .need { position:absolute; top:-2px; bottom:-2px; width:2px; background:#fff; opacity:.85; }
+.meter-lbl { display:flex; justify-content:space-between; font-size:10.5px; color:var(--dim); }
+.pill { display:inline-block; font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase;
+  padding:2px 8px; border-radius:12px; border:1px solid; margin-left:6px; vertical-align:middle; }
+.pill.v { color:var(--violet); border-color:#5a4a76; background:#241c33; }
+.pill.g { color:var(--green); border-color:#2f6046; background:#123024; }
+.pill.r { color:var(--red); border-color:#7d3a30; background:#311915; }
+
+/* stats table */
+.stbl { width:100%; border-collapse:collapse; font-size:12px; }
+.stbl th { text-align:right; font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--dim);
+  padding:5px 5px; font-weight:800; border-bottom:1px solid var(--line); }
+.stbl th:first-child { text-align:left; }
+.stbl td { padding:6px 5px; border-bottom:1px solid rgba(255,255,255,.04); text-align:right; font-variant-numeric:tabular-nums; }
+.stbl td:first-child { text-align:left; }
+.stbl .pn { font-weight:700; } .stbl .pt { font-size:10px; color:var(--dim); display:block; }
+
+
+/* lessons */
+.lesson-nav { display:flex; gap:5px; margin-bottom:14px; flex-wrap:wrap;
+  position:sticky; top:-13px; background:var(--panel); padding:4px 0 8px; z-index:2; }
+.ln { background:var(--panel-2); border:1px solid var(--line); color:var(--muted);
+  font-size:11px; font-weight:700; padding:5px 10px; border-radius:14px; }
+.ln:hover { color:var(--text); border-color:#3d6a4f; }
+.ln.on { background:#2a4a35; color:var(--gold); border-color:#4d7a5c; }
+.lgroup { display:none; } .lgroup.on { display:block; }
+.lesson h4 { color:var(--gold); font-size:13.5px; margin:18px 0 6px; }
+.lgroup > h4:first-child { margin-top:0; }
+.lesson p { font-size:12.5px; line-height:1.66; color:#c9dace; margin-bottom:9px; }
+.lesson p.note { font-size:11.5px; color:var(--muted); border-left:2px solid var(--line);
+  padding-left:9px; margin:10px 0; }
+.lesson p.rule { background:var(--panel-2); border:1px solid var(--line); border-radius:7px;
+  padding:9px 11px; font-size:12px; line-height:1.8; color:var(--text); }
+.lesson p.rule b, .lesson p b { color:var(--gold); }
+table.ranks { width:100%; border-collapse:collapse; font-size:11.5px; margin:9px 0 4px; }
+table.ranks td { padding:4px 5px; border-bottom:1px solid rgba(255,255,255,.05); color:#c9dace; vertical-align:top; }
+table.ranks td:first-child { color:var(--dim); width:16px; font-variant-numeric:tabular-nums; }
+table.ranks td b { color:var(--text); white-space:nowrap; }
+table.ranks td.rare { text-align:right; color:var(--dim); white-space:nowrap; font-variant-numeric:tabular-nums; }
+
+/* plain-English restatement under a recommendation */
+.plain { font-size:13px; line-height:1.55; color:var(--text) !important; font-weight:600; }
+
+/* "show the working" disclosures */
+details.working { margin-top:10px; border-top:1px solid rgba(255,255,255,.06); padding-top:8px; }
+details.working > summary { font-size:11.5px; color:var(--muted); cursor:pointer; list-style:none;
+  display:flex; align-items:center; gap:6px; user-select:none; }
+details.working > summary::-webkit-details-marker { display:none; }
+details.working > summary::before { content:"?"; flex:none; width:15px; height:15px; border-radius:50%;
+  border:1px solid var(--line); background:var(--panel-2); color:var(--dim);
+  font-size:10px; font-weight:800; display:flex; align-items:center; justify-content:center; }
+details.working > summary:hover { color:var(--gold); }
+details.working[open] > summary { color:var(--gold); margin-bottom:8px; }
+details.working[open] > summary::before { content:"\2715"; border-color:#4d7a5c; color:var(--gold); }
+.wbody { font-size:12px; line-height:1.6; color:#bccfc2; border-left:2px solid var(--line); padding-left:10px; }
+.wbody p { margin-bottom:8px; font-size:12px; }
+.wbody ul { margin:0 0 8px 16px; }
+.wbody li { margin-bottom:5px; }
+.wbody b { color:var(--text); }
+.wbody p.caveat { color:var(--muted); font-size:11.5px; border-top:1px dashed var(--line); padding-top:7px; }
+.range-read { border-top:1px solid rgba(255,255,255,.06); padding-top:9px; margin-top:9px; }
+.range-read:first-of-type { border-top:0; padding-top:0; margin-top:0; }
+.range-read .range-name { color:var(--gold); font-weight:800; }
+.range-read p { font-size:12px; color:#c4d7ca; margin:4px 0; }
+.range-read .examples { color:var(--text); }
+.model-warning { border-left-color:var(--blue); }
+.solver-card { border-left-color:var(--violet); }
+.solver-card .rec { font-size:19px; }
+
+/* jargon tooltips */
+.gl { font-style:normal; border-bottom:1px dotted var(--muted); cursor:help; }
+th[data-tip] { cursor:help; text-decoration:underline dotted rgba(255,255,255,.25); }
+#tip { position:fixed; z-index:999; max-width:270px; background:#08120d; color:var(--text);
+  border:1px solid #3d6a4f; border-radius:7px; padding:8px 10px; font-size:11.5px; line-height:1.5;
+  box-shadow:0 8px 24px rgba(0,0,0,.6); pointer-events:none; display:none; }
+kbd { background:#08120d; border:1px solid var(--line); border-bottom-width:2px; border-radius:4px;
+  padding:1px 6px; font-size:11px; font-family:inherit; }
+
+/* ───────── chat ───────── */
+.chat-head { flex:none; padding:11px 13px; border-bottom:1px solid var(--line); }
+.chat-head h2 { font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--gold); font-weight:800; }
+.chat-head p { font-size:11.5px; color:var(--dim); margin-top:3px; line-height:1.45; }
+.chat-meta { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:7px; }
+#status { display:inline-flex; align-items:center; gap:5px; font-size:10.5px;
+  padding:2px 8px; border-radius:11px; border:1px solid var(--line); color:var(--muted); }
+#status .dot { width:6px; height:6px; border-radius:50%; background:var(--dim); }
+#status.ok .dot { background:var(--green); box-shadow:0 0 7px var(--green); }
+#status.bad .dot { background:var(--red); }
+.engine-pick { display:inline-flex; align-items:center; gap:5px; font-size:10.5px; color:var(--dim);
+  letter-spacing:.06em; text-transform:uppercase; font-weight:700; }
+#engine { background:var(--panel-2); border:1px solid var(--line); border-radius:11px; color:var(--text);
+  font:inherit; font-size:10.5px; font-weight:700; padding:2px 6px; outline:none; cursor:pointer; }
+#engine:focus { border-color:#3d6a4f; }
+#engine option:disabled { color:var(--dim); }
+#msgs { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:11px; }
+.msg { font-size:12.5px; line-height:1.62; border-radius:10px; padding:9px 11px; max-width:100%; word-wrap:break-word; }
+.msg.you { background:#1d3a2a; border:1px solid #2f5c42; align-self:flex-end; max-width:88%; }
+.msg.ai { background:var(--panel-2); border:1px solid var(--line); }
+.msg.sys { background:transparent; border:1px dashed var(--line); color:var(--dim); font-size:11.5px; }
+.msg.err { background:#301714; border:1px solid #6d312a; color:#ffb3a8; }
+.msg .who { font-size:9.5px; letter-spacing:.13em; text-transform:uppercase; color:var(--dim); font-weight:800; margin-bottom:5px; }
+.msg.ai .who { color:var(--gold); }
+.msg p { margin-bottom:7px; } .msg p:last-child { margin-bottom:0; }
+.msg ul { margin:0 0 7px 17px; } .msg li { margin-bottom:3px; }
+.msg code { background:#08120d; border:1px solid var(--line); border-radius:3px; padding:0 4px; font-size:11.5px; }
+.msg strong { color:var(--gold); }
+.caret { display:inline-block; width:7px; height:13px; background:var(--gold); vertical-align:-2px; animation:blink 1s steps(2) infinite; }
+@keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+.chat-quick { flex:none; display:flex; gap:5px; flex-wrap:wrap; padding:0 12px 8px; }
+.qbtn { background:var(--panel-2); border:1px solid var(--line); color:var(--muted); font-size:10.5px;
+  padding:4px 9px; border-radius:13px; }
+.qbtn:hover { color:var(--gold); border-color:#4d7a5c; }
+.chat-form { flex:none; border-top:1px solid var(--line); padding:9px; display:flex; gap:7px; align-items:flex-end; }
+#qbox { flex:1; background:#08120d; border:1px solid var(--line); border-radius:8px; color:var(--text);
+  font:inherit; font-size:12.5px; padding:8px 10px; resize:none; height:60px; outline:none; }
+#qbox:focus { border-color:#3d6a4f; }
+#send { background:var(--gold); color:#1a1206; border:none; border-radius:8px; padding:9px 14px; font-weight:800; font-size:12.5px; }
+#send:disabled { opacity:.4; cursor:default; }
+
+@media (max-width:1400px) { #chatPane{width:290px} #sidebar{width:340px} }
+@media (max-width:1150px) { #chatPane{width:255px} #sidebar{width:310px} .seat{width:150px} }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>&#9824; Hold'em <span>Coach</span></h1>
+  <div class="hdr-group">
+    <span class="chip-stat" id="handCounter">Hand <b>0</b></span>
+    <span class="chip-stat" id="bankroll">You <b>2,000</b></span>
+    <span class="chip-stat" id="scorecard">Coach agreement <b>—</b></span>
+  </div>
+  <div class="hdr-group">
+    <label class="toggle"><input type="checkbox" id="tCoach" checked> Coach</label>
+    <label class="toggle"><input type="checkbox" id="tReveal"> X-ray</label>
+    <label class="toggle"><input type="checkbox" id="tFast"> Fast bots</label>
+    <button class="btn" id="bRebuy">Rebuy</button>
+    <button class="btn primary" id="bNew">New hand</button>
+  </div>
+</header>
+
+<main>
+  <!-- ───────── chat ───────── -->
+  <section id="chatPane">
+    <div class="chat-head">
+      <h2>Ask the Coach</h2>
+      <p>Answers in plain English, no jargon. Your question goes to a local <code>claude</code> or <code>codex</code> process with the full play-by-play of this hand.</p>
+      <div class="chat-meta">
+        <label class="engine-pick" for="engine">Ask
+          <select id="engine">
+            <option value="claude" selected>Claude</option>
+            <option value="codex">Codex</option>
+          </select>
+        </label>
+        <span id="status"><span class="dot"></span><span id="statusText">checking…</span></span>
+      </div>
+    </div>
+    <div id="msgs"></div>
+    <div class="chat-quick">
+      <button class="qbtn" data-q="What should I do here and why?">What now?</button>
+      <button class="qbtn" data-q="What range does the aggressor most plausibly have here, and how much of it is bluffs?">Their range?</button>
+      <button class="qbtn" data-q="Is this a good spot to bluff? Walk me through the fold equity.">Bluff here?</button>
+      <button class="qbtn" data-q="Review how I played this hand street by street. Where did I lose value or spew chips?">Review hand</button>
+    </div>
+    <form class="chat-form" id="chatForm">
+      <textarea id="qbox" placeholder="Ask about this hand…  (Enter to send)"></textarea>
+      <button id="send" type="submit">Ask</button>
+    </form>
+  </section>
+
+  <!-- ───────── table ───────── -->
+  <section id="centre">
+    <div id="tableWrap">
+      <div id="table">
+        <div id="board"></div>
+        <div id="pot"></div>
+        <div id="toast"></div>
+        <div id="seats"></div>
+      </div>
+    </div>
+    <div id="streets">
+      <div class="srow" data-s="preflop"><span class="slabel">Pre-flop</span><span class="scards"></span><span class="sacts"></span></div>
+      <div class="srow" data-s="flop"><span class="slabel">Flop</span><span class="scards"></span><span class="sacts"></span></div>
+      <div class="srow" data-s="turn"><span class="slabel">Turn</span><span class="scards"></span><span class="sacts"></span></div>
+      <div class="srow" data-s="river"><span class="slabel">River</span><span class="scards"></span><span class="sacts"></span></div>
+    </div>
+    <div id="coachHint"></div>
+    <div id="bar">
+      <button class="act" id="bFold">Fold<span class="k">F</span></button>
+      <button class="act" id="bCall">Check<span class="k">C</span></button>
+      <button class="act" id="bRaise">Bet<span class="k">R</span></button>
+      <div id="raiseBox">
+        <div id="sizers">
+          <button class="sz" data-f="min">Min</button>
+          <button class="sz" data-f="0.33">&#8531; pot</button>
+          <button class="sz" data-f="0.5">&#189; pot</button>
+          <button class="sz" data-f="0.75">&#190; pot</button>
+          <button class="sz" data-f="1">Pot</button>
+          <button class="sz" data-f="max">All-in</button>
+        </div>
+        <div id="amtWrap">
+          <span class="amt-pre">chips</span>
+          <input type="text" id="amtInput" inputmode="numeric" autocomplete="off"
+                 spellcheck="false" aria-label="Amount to bet or raise to">
+          <span id="amtHint"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────── coach sidebar ───────── -->
+  <section id="sidebar">
+    <div class="tabs">
+      <div class="tab on" data-p="coach">Coach</div>
+      <div class="tab" data-p="players">Players</div>
+      <div class="tab" data-p="learn">Lessons</div>
+    </div>
+    <div class="pane on" id="p-coach"></div>
+    <div class="pane" id="p-players"></div>
+    <div class="pane lesson" id="p-learn">
+      <div class="lesson-nav">
+        <button class="ln on" data-lv="basics">Start here</button>
+        <button class="ln" data-lv="money">The money</button>
+        <button class="ln" data-lv="bluff">Bluffing</button>
+        <button class="ln" data-lv="read">Reading people</button>
+      </div>
+
+      <!-- ─────────── START HERE ─────────── -->
+      <div class="lgroup on" data-lv="basics">
+        <h4>What you are actually trying to do</h4>
+        <p>You get two private cards. Five more are turned face up in the middle for everyone to share. You make the best five-card hand you can out of those seven.</p>
+        <p>There are <b>two ways to win the chips</b>, and beginners only ever think about the first one:</p>
+        <p>1. Have the best hand when the cards get turned over.<br>
+           2. Bet enough that everyone else gives up first — then it doesn't matter what you had.</p>
+        <p>Almost everything the coach tells you comes from weighing those two against each other.</p>
+
+        <h4>How a hand runs</h4>
+        <p>Money goes in four times: once before any shared cards appear (<b>pre-flop</b>), then after the first three (<b>the flop</b>), the fourth (<b>the turn</b>), and the fifth (<b>the river</b>). Each time, you can <b>fold</b> (give up), <b>check</b> (stay in for free), <b>call</b> (match what's been bet), or <b>raise</b> (bet more).</p>
+        <p>Two players are forced to put chips in before each hand — the <b>blinds</b>. That's the seed money everyone is fighting over, and it rotates around the table so it costs everyone the same over time.</p>
+
+        <h4>Which hands beat which</h4>
+        <table class="ranks">
+          <tr><td>1</td><td><b>Straight flush</b></td><td>Five in a row, all one suit</td><td class="rare">1 in 30,000</td></tr>
+          <tr><td>2</td><td><b>Four of a kind</b></td><td>All four of one rank</td><td class="rare">1 in 4,000</td></tr>
+          <tr><td>3</td><td><b>Full house</b></td><td>Three of one rank, two of another</td><td class="rare">1 in 40</td></tr>
+          <tr><td>4</td><td><b>Flush</b></td><td>Five of the same suit</td><td class="rare">1 in 33</td></tr>
+          <tr><td>5</td><td><b>Straight</b></td><td>Five in a row, any suits</td><td class="rare">1 in 22</td></tr>
+          <tr><td>6</td><td><b>Three of a kind</b></td><td>Three of one rank</td><td class="rare">1 in 21</td></tr>
+          <tr><td>7</td><td><b>Two pair</b></td><td>Two pairs</td><td class="rare">1 in 4</td></tr>
+          <tr><td>8</td><td><b>One pair</b></td><td>Two cards of the same rank</td><td class="rare">1 in 2</td></tr>
+          <tr><td>9</td><td><b>High card</b></td><td>None of the above</td><td class="rare">1 in 5</td></tr>
+        </table>
+        <p class="note">Those odds are for your best hand once all seven cards are out. Notice how ordinary most hands are — <b>one pair wins an enormous number of pots</b>. If you are waiting for a full house before you bet, you will wait all night.</p>
+
+        <h4>The one thing that matters most: where you sit</h4>
+        <p>The dealer button moves one seat left each hand. The closer you are to it, the later you act — and acting last is worth more than most card advantages, because you get to see what everyone else does before you commit a chip.</p>
+        <p>That's why the coach will tell you to raise a hand on the button and fold the exact same two cards from the first seat. Same cards, completely different situation.</p>
+
+        <h4>Your first three rules</h4>
+        <p><b>Fold most hands.</b> You will throw away roughly three quarters of what you're dealt. That's not being timid, that's the game.</p>
+        <p><b>When you do play, bet.</b> Calling wins you the pot only when you have the best hand. Betting also wins it when they fold.</p>
+        <p><b>Never fold when checking is free.</b> If nobody has bet, staying in costs nothing. There is no such thing as a hand too bad to see a free card with.</p>
+      </div>
+
+      <!-- ─────────── THE MONEY ─────────── -->
+      <div class="lgroup" data-lv="money">
+        <h4>You are being offered a price</h4>
+        <p>Every time somebody bets, they are selling you a lottery ticket. The question is never "do I have the best hand?" — it's <b>"is this ticket cheap enough?"</b></p>
+        <p>Say there's <b>100</b> in the middle and someone bets <b>50</b>. Calling costs you 50, and if you win you collect 200. So you're getting 3-to-1: you need to win just <b>one time in four</b> to break even.</p>
+        <p>That's a low bar. Plenty of hands that feel weak clear it comfortably — and plenty of hands that feel strong don't, when the bet is huge. The coach shows both numbers every single time: <b>how often you win</b>, and <b>how often you'd need to win</b>. If the first is bigger than the second, calling makes money. That's the whole calculation.</p>
+        <p class="note">Poker people call this <b>pot odds</b>. It is the single most useful idea in the game, and it is just shopping.</p>
+
+        <h4>Counting your chances</h4>
+        <p>If you don't have the best hand yet, count the cards that would give it to you. Poker calls them your <b>outs</b>.</p>
+        <p>Four hearts and you need a fifth? There are 13 hearts, you can see 4, so <b>9 outs</b>. Four cards to a straight, open at both ends? <b>8 outs</b>.</p>
+        <p>Then a shortcut good enough to do in your head:</p>
+        <p class="rule">Two cards still to come → <b>multiply your outs by 4</b>.<br>One card to come → <b>multiply by 2</b>.</p>
+        <p>Nine outs on the flop → about 36%. Nine outs on the turn → about 18%. Compare that to the price you're being offered and you have your answer.</p>
+
+        <h4>The numbers worth memorising</h4>
+        <p>Four flush cards: <b>~35%</b> to get there. Open-ended straight: <b>~32%</b>. A straight missing the middle card: <b>~16%</b>. A pair of aces against one random hand: <b>~85%</b>. A pair of aces against three: <b>~64%</b> — which is the first hint that more opponents is a much bigger deal than people expect.</p>
+
+        <h4>Where the coach's percentages come from</h4>
+        <p>When the coach says "you win 29% of the time", it hasn't looked up a table. It has <b>played the rest of the hand out a few thousand times</b> and counted how often you won.</p>
+        <p>Each time round, it deals each opponent a random hand out of the hands they'd plausibly be playing this way, deals the remaining board cards at random, and checks who ends up with the best five. Do that 4,000 times and the proportion you win is your answer.</p>
+        <p>Click <b>"Where does 29% come from?"</b> under any figure and it will show you the actual counts — how many of those deals you won, tied and lost — along with the range it assumed for each player.</p>
+        <p class="note">Worth knowing which numbers to trust. The <b>win percentage</b> is a Monte Carlo estimate: its sampling uncertainty is measurable, but it is only as good as the assumed ranges. The recommended move adds more judgement calls about folds and future betting. <b>"They fold X%"</b> and <b>"that's a bluff X% of the time"</b> are educated guesses from bet sizing, board texture and observed behaviour. This is a transparent coaching model, not a full game-theory solver.</p>
+
+        <h4>Paying now for a pot you only win later</h4>
+        <p>Some hands are too weak to play for <em>this</em> pot, but worth a cheap call for the pot they win on the times they smash the flop — and those times, nobody puts you on the hand, so they pay. Poker calls this <b>implied odds</b>.</p>
+        <p>A small pair (22 through 77) flops three of a kind about <b>1 time in 8</b>. Suited connectors (76s, 98s) flop disguised straights and flushes a bit less often. Offsuit junk does not hit often enough for the same plan to work. 88 and better play as a real pair, not a lottery ticket.</p>
+        <p>Two conditions, both required: the flop has to be <b>cheap</b>, and there has to be about <b>ten times your call</b> still behind so that the one time you hit actually gets paid. Short stacks, re-raises, and acting first after the flop (for the suited hands) kill it. The coach will call 22 on the button against one raise with a deep stack, and fold the same 22 if they are all-in or you have to play it from the small blind with 76s.</p>
+
+        <h4>Bet sizes tell a story</h4>
+        <p>Roughly: <b>a small bet</b> (a third of the pot) says "I have something, I'd like a cheap showdown". <b>A big bet</b> (three quarters or more) says "I have a monster, or I have nothing" — big bets come from hands at the extremes.</p>
+        <p>The useful part: ask what your <em>own</em> size says. If you only ever bet big with the nuts, people will work it out and stop paying you.</p>
+      </div>
+
+      <!-- ─────────── BLUFFING ─────────── -->
+      <div class="lgroup" data-lv="bluff">
+        <h4>A bluff is an arithmetic question</h4>
+        <p>Forget staring people down. A bluff is a bet you make expecting to be folded on, and there is exactly one thing to work out: <b>how often does it need to work?</b></p>
+        <p>You bet <b>50</b> into a pot of <b>100</b>. You lose 50 when it fails and win 100 when it works — so it needs to work <b>one time in three</b>. Nothing else. If your opponent folds more often than that, betting prints money regardless of your cards.</p>
+        <p class="rule">Half-pot bluff → needs to work <b>33%</b><br>Pot-sized bluff → needs to work <b>50%</b><br>Double-pot bluff → needs to work <b>67%</b></p>
+        <p>The coach shows this as two bars: how often they actually fold, and the line a bluff with no chance when called would need to clear. A flush or straight draw can still make a profitable semi-bluff below that line because it sometimes wins after being called.</p>
+
+        <h4>Bluff your worst hands, not your medium ones</h4>
+        <p>This feels backwards and it is the most valuable thing on this page.</p>
+        <p>If your hand might win at showdown, betting it as a bluff throws that chance away — you only get called by hands that beat you, and you fold out the ones you were beating. A hand with <em>no</em> chance loses nothing when you bet it, because checking was worth zero anyway.</p>
+        <p>So: king-high on a scary board is a bad bluff. Complete air is a good one.</p>
+
+        <h4>The best bluffs aren't really bluffs</h4>
+        <p>Bet a flush draw and you win two different ways: they fold now, or they call and you hit your card later. That second chance turns bets that would otherwise lose into bets that make money. Poker calls it a <b>semi-bluff</b>, and it's where most of a good player's aggression comes from.</p>
+        <p>The coach will also stop you: if you have a draw but four people still have to fold, it says <b>take the free card instead</b>. You keep the draw and risk nothing. More opponents kills bluffs faster than anything else — every extra player is another chance somebody has a hand.</p>
+
+        <h4>Cards they can't have</h4>
+        <p>If three spades are on the board and you're holding the ace of spades, then <b>nobody else has the best flush</b> — you're sitting on it. Your bluff is telling a story they have no way to contradict.</p>
+        <p>Poker calls these <b>blockers</b>, and the coach points them out when you have them.</p>
+
+        <h4>Why you must sometimes call with a bad hand</h4>
+        <p>If you only ever call with strong hands, anyone paying attention can bet at you with any two cards and profit. To stop that, you have to call often enough that bluffing you isn't free.</p>
+        <p>The number mirrors the bluff maths: against a half-pot bet you need to keep playing with about <b>two thirds</b> of your hands. Against a pot-sized bet, about <b>half</b>.</p>
+        <p>This is why the coach sometimes tells you to call with something that feels far too weak. It isn't saying your hand is good — it's saying theirs often isn't, and folding every time is a leak they can print money from.</p>
+      </div>
+
+      <!-- ─────────── READING PEOPLE ─────────── -->
+      <div class="lgroup" data-lv="read">
+        <h4>You are not playing two cards, you are playing all of them</h4>
+        <p>You can't see their hand, so guessing at one specific holding is a waste of time. What you can do is ask: <b>which hands would somebody play like this?</b> That set is their <b>range</b>, and it's what you're really up against.</p>
+        <p>Someone who raised from the first seat has a narrow, strong range. Someone in the big blind who just checked could have nearly anything. Same two cards of yours can be an 85% favourite against one and a 30% underdog against the other.</p>
+        <p>The <b>What they might be holding</b> box shows the guess the coach is making, the evidence behind it, concrete starting-hand examples from both ends of the range, and the value/bluff slices used after a bet. Those are examples from a set, not a claim that the coach knows their exact cards. If you think the set is wrong, the win percentage and recommendation can be wrong too.</p>
+        <p>That's why the coach's win percentage moves around so much. It isn't measuring your hand in a vacuum — it's measuring it against what each player has told you by how they've bet.</p>
+
+        <h4>What to watch for</h4>
+        <p>The <b>Players</b> tab keeps three numbers on everyone, including you:</p>
+        <p><b>Plays</b> — how often they put money in before the flop. Under 20% is a rock; over 40% is someone playing far too many hands.</p>
+        <p><b>Raises</b> — how often they raise rather than call. A big gap between this and "Plays" means a passive player who calls a lot.</p>
+        <p><b>Bets vs calls</b> — aggression after the flop. Under 1 means a caller. Over 3 means someone constantly firing.</p>
+
+        <h4>What to actually do about it</h4>
+        <p><b>Against someone who calls everything:</b> never bluff, and bet your decent hands harder than feels comfortable. They'll pay you off with worse. Bluffing a player who doesn't fold is setting money on fire.</p>
+        <p><b>Against someone who folds a lot:</b> bet at them relentlessly. Their folding is your profit, and you don't need cards to collect it.</p>
+        <p><b>Against someone who raises constantly:</b> stop trying to out-bluff them — let them bluff into you. Check your good hands and let them bet your hand for you.</p>
+        <p><b>Against someone who almost never raises:</b> when they finally do, believe them, and fold hands you'd normally be delighted with.</p>
+
+        <h4>When to check a strong hand</h4>
+        <p>Betting a monster is usually right. It gets paid by worse hands and it stops them seeing the next card for free. Checking it — a <b>trap</b> — is only worth it when the extra money they will put in <em>because you looked weak</em> beats the money you give up by not betting now, including the risk they hit a lucky card.</p>
+        <p>Checking is the extreme. You can also slow-play by betting <b>small</b> — about a third of the pot instead of two-thirds. That still charges for a card, but it looks like a stab, so worse hands call and aggressive players raise. A big bet with the nuts often folds the hands you wanted to tax.</p>
+        <p>That is almost never true of a <em>check</em> on the last card when they have already checked to you: nobody is left who can bet, so checking just takes it to the end. A small bet on the river can still get raised. Earlier, heads-up, against someone who loves to bet, on a board that doesn't connect much, all three lines are live.</p>
+        <p>The coach works this out as three long-run totals — full bet, small bet, and check/call — and picks the bigger one. When they are close, it tells you to mix. Taking the mix line is marked <b>close</b>, not a miss.</p>
+
+        <h4>Judge the decision, not the result</h4>
+        <p>A flush draw comes in more than a third of the time. When it does, that isn't a bad beat — it's the thing that was always going to happen roughly one time in three.</p>
+        <p>The only question worth asking after a hand is whether your chance of winning beat the price you were paying. If it did, you played it right and the money will come. Use the street-by-street strip under the table and the review after each hand to check that, and ask Claude on the left when you're not sure.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="poker.js"></script>
+<script src="ranges.js"></script>
+<script src="exploit.js"></script>
+<script src="context.js"></script>
+<script src="coach.js"></script>
+<script src="solver.js"></script>
+<script src="bots.js"></script>
+<script src="strategy.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>
