@@ -148,7 +148,7 @@ function createTable(game, rng) {
         entered.push(R.estimateRange(game, q.id, stats));
     });
     var facingEq = entered.length
-      ? P.equity(p.hole, [], entered, entered.length > 2 ? 220 : 320, rng).equity : 0.5;
+      ? P.equityForCall(game, p.id, entered, entered.length > 2 ? 220 : 320, rng).equity : 0.5;
     var allInCall = lg.toCall >= p.chips;
     var realization = allInCall ? 1 : late ? 0.92
                     : pos.indexOf("Big Blind") >= 0 ? 0.84 : 0.76;
@@ -187,7 +187,7 @@ function createTable(game, rng) {
     var texture = P.boardTexture(game.board);
     var actionRanges = ranges.map(function (r) { return R.conditionRange(game, r, stats, texture, p.id); });
     var iters = ranges.length > 2 ? 220 : 320;
-    var eq = P.equity(p.hole, game.board, actionRanges, iters, rng).equity;
+    var eq = P.equityForCall(game, p.id, actionRanges, iters, rng).equity;
     var a = P.analyseHand(p.hole, game.board);
     var pot = lg.contestablePot === undefined ? lg.pot : lg.contestablePot;
     var potOdds = lg.toCall > 0 ? lg.toCall / (pot + lg.toCall) : 0;

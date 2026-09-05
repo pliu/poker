@@ -23,6 +23,7 @@ var estimateInduceFrequency = X.estimateInduceFrequency;
 function clamp(x, a, b) { return x < a ? a : x > b ? b : x; }
 function pct(x) { return Math.round(x * 100) + "%"; }
 function chips(x) { var v = Math.abs(Math.round(x)); return v + (v === 1 ? " chip" : " chips"); }
+function signedChips(x) { return (x < 0 ? "−" : "+") + chips(x); }
 function pct1(x) { return (x * 100).toFixed(1) + "%"; }
 
 /* Percentages are abstract. "About 1 time in 3" is not. */
@@ -108,6 +109,7 @@ function simProvenance(eqRes, ranges, board, iters, hole) {
     lost: Math.round(eqRes.lose * n),
     tieEquity: eqRes.tieEquity || 0,
     equity: eqRes.equity,
+    pots: eqRes.pots || null,
     margin: margin,
     cardsToCome: 5 - board.length,
     ranges: ranges.map(function (r) {
@@ -173,7 +175,27 @@ function betTarget(g, heroId, fracOfPot) {
   var target = lg.currentBet + Math.round((pot + lg.toCall) * fracOfPot);
   if (lg.currentBet === 0) target = Math.round(pot * fracOfPot);
   target = roundChips(target, g.bb);
-  return clamp(target, lg.minRaiseTo, lg.maxRaiseTo);
+  return effectiveTarget(g, heroId, target);
+}
+
+function effectiveTarget(g, heroId, target) {
+  var lg = g.legal(heroId), maxOppTo = 0;
+  g.live().forEach(function (p) {
+    if (p.id !== heroId) maxOppTo = Math.max(maxOppTo, p.bet + p.chips);
+  });
+  return clamp(Math.min(target, maxOppTo), lg.minRaiseTo, lg.maxRaiseTo);
+}
+
+/* A legal minimum bet may exceed a short opponent's stack. Its unmatched
+   excess is returned, so only matched chips are at risk or available to win. */
+function betCosts(g, heroId, target) {
+  var hero = g.players[heroId], maxOppTo = 0, caller = 0;
+  g.live().forEach(function (p) {
+    if (p.id === heroId) return;
+    maxOppTo = Math.max(maxOppTo, p.bet + p.chips);
+    caller = Math.max(caller, Math.max(0, Math.min(p.chips, target - p.bet)));
+  });
+  return { cost: Math.max(0, Math.min(target, maxOppTo) - hero.bet), caller: caller };
 }
 
 /* A slow-play size: small enough to look like a stab, distinct from the
@@ -261,8 +283,9 @@ function trapEV(g, heroId, ctx) {
   if (!liveOpp.length) return null;
 
   var valueTo = ctx.valueTo || betTarget(g, heroId, 0.65);
-  valueTo = clamp(valueTo, lg.minRaiseTo, lg.maxRaiseTo);
-  var valueCost = Math.max(0, valueTo - hero.bet);
+  valueTo = effectiveTarget(g, heroId, valueTo);
+  var valueCosts = betCosts(g, heroId, valueTo);
+  var valueCost = valueCosts.cost;
   if (valueCost <= 0) return null;
 
   var feVal = foldEquity(g, heroId, valueCost, pot, ranges, texture, stats, toCall > 0);
@@ -277,7 +300,7 @@ function trapEV(g, heroId, ctx) {
       eqWhenCalled = clamp(eq * 0.85, 0, 1);
     }
   }
-  var valueCallerCost = Math.max(0, valueTo - lg.currentBet);
+  var valueCallerCost = valueCosts.caller;
   var evBet = evValueBet(pot, valueCost, feVal.all, eqWhenCalled, valueCallerCost);
 
   var when, induceOpps;
@@ -397,7 +420,9 @@ function trapEV(g, heroId, ctx) {
   var evSmall = null, smallCost = 0, feSmall = 0, eqSmallCont = eq, pRaiseSmall = 0;
   var eqVsRaise = eqInd;
   if (smallTo > 0) {
-    smallCost = Math.max(0, smallTo - hero.bet);
+    smallTo = effectiveTarget(g, heroId, smallTo);
+    var smallCosts = betCosts(g, heroId, smallTo);
+    smallCost = smallCosts.cost;
     var feS = foldEquity(g, heroId, smallCost, pot, ranges, texture, stats, toCall > 0);
     feSmall = feS.all;
     eqSmallCont = eqVsContinuing(hero, g.board, ranges, nOpp, 1 - feSmall, iters, rng, eq);
@@ -420,10 +445,11 @@ function trapEV(g, heroId, ctx) {
     if (maxT <= smallTo) { T = smallTo; pRaiseSmall = 0; }
     else T = clamp(T, Math.min(smallTo + g.bb, maxT), maxT);
     var pCallS = Math.max(0, pContS - pRaiseSmall);
-    var smallCallerCost = Math.max(0, smallTo - lg.currentBet);
+    var smallCallerCost = smallCosts.caller;
     var evCallS = eqSmallCont * (pot + smallCost + smallCallerCost) - smallCost;
-    var heroFinalCost = Math.max(0, T - hero.bet);
-    var oppFinalCost = Math.max(0, T - lg.currentBet);
+    var finalCosts = betCosts(g, heroId, T);
+    var heroFinalCost = finalCosts.cost;
+    var oppFinalCost = finalCosts.caller;
     // Whoever raises a small bet has a stronger range than whoever merely
     // bets: the strongest slice of their hands plus a thinner set of bluffs.
     var raiseBluff = clamp(bluffPct * 0.7, 0.05, 0.40);
@@ -518,9 +544,9 @@ function trapEV(g, heroId, ctx) {
       "betting, you win " + pct(eqInd) + " of the time.";
   }
   text += " " + valueWord.charAt(0).toUpperCase() + valueWord.slice(1) + " is worth about " +
-    chips(evBet) + " in the long run";
-  if (evSmall !== null) text += "; " + smallWord + " is worth about " + chips(evSmall);
-  text += "; " + trapWord + " is worth about " + chips(evTrap) + ".";
+    signedChips(evBet) + " in the long run";
+  if (evSmall !== null) text += "; " + smallWord + " is worth about " + signedChips(evSmall);
+  text += "; " + trapWord + " is worth about " + signedChips(evTrap) + ".";
   if (freeCardCost > 4 && cardsToCome > 0 && canInduce) {
     text += " The check already takes off about " + chips(freeCardCost) + " for giving them a free card on this board.";
   }
@@ -696,7 +722,7 @@ function advisePreflop(g, heroId, opts) {
   });
   var decisionRanges = (facingRaise && contested.length) ? contested : ranges;
   var eqRes = decisionRanges.length
-    ? P.equity(hero.hole, [], decisionRanges, preIters, opts && opts.rng)
+    ? P.equityForCall(g, heroId, decisionRanges, preIters, opts && opts.rng)
     : { equity: 1, win: 1, tie: 0, lose: 0, iters: 0 };
   var eq = eqRes.equity;
   var prov = simProvenance(eqRes, decisionRanges, [], preIters, hero.hole);
@@ -964,7 +990,7 @@ function advisePostflop(g, heroId, opts) {
   var texture = P.boardTexture(g.board);
   var a = P.analyseHand(hero.hole, g.board);
   var equityRanges = ranges.map(function (r) { return conditionRange(g, r, stats, texture, heroId); });
-  var eqRes = P.equity(hero.hole, g.board, equityRanges, iters, rng);
+  var eqRes = P.equityForCall(g, heroId, equityRanges, iters, rng);
   var eq = eqRes.equity;
   var prov = simProvenance(eqRes, equityRanges, g.board, iters, hero.hole);
   var pot = lg.contestablePot === undefined ? lg.pot : lg.contestablePot, toCall = lg.toCall;
@@ -983,8 +1009,9 @@ function advisePostflop(g, heroId, opts) {
   // already higher because you are risking more to win the same pot.
   var bluffFrac = isRaise ? 0.55 : (texture.wet > 0.5 ? 0.75 : 0.6);
   var bluffSize = betTarget(g, heroId, bluffFrac);
-  var bluffCost = bluffSize - hero.bet;
-  var bluffCallerCost = Math.max(0, bluffSize - lg.currentBet);
+  var bluffCosts = betCosts(g, heroId, bluffSize);
+  var bluffCost = bluffCosts.cost;
+  var bluffCallerCost = bluffCosts.caller;
   var potIfTheyFold = pot;
   var fe = foldEquity(g, heroId, bluffCost, potIfTheyFold, ranges, texture, stats, isRaise);
   var breakEven = bluffCost / (potIfTheyFold + bluffCost);
@@ -1050,9 +1077,10 @@ function advisePostflop(g, heroId, opts) {
         return calledThisStreet ? P.boardRange(r, { boardTop: 0.55 })
                                 : conditionRange(g, r, stats, texture, heroId);
       });
-      var multiDecisionEq = nOpp > 1
-        ? P.equity(hero.hole, g.board, decisionModels, Math.max(300, Math.round(iters * 0.7)), rng).equity
-        : eqVsPolar;
+      var multiDecisionResult = nOpp > 1
+        ? P.equityForCall(g, heroId, decisionModels, Math.max(300, Math.round(iters * 0.7)), rng)
+        : null;
+      var multiDecisionEq = multiDecisionResult ? multiDecisionResult.equity : eqVsPolar;
       var wagerVerb = wager && /^RAISE/.test(wager.label || "") ? "raised" : "bet";
       vsBluff = {
         villain: g.players[vId].name, bluffPct: bluffPct,
@@ -1069,6 +1097,7 @@ function advisePostflop(g, heroId, opts) {
           "so far. It is a read, not a fact.",
         eqVsValue: eqVsValue, eqVsAir: eqVsAir, eqVsPolarised: eqVsPolar,
         decisionEquity: multiDecisionEq,
+        pots: multiDecisionResult && multiDecisionResult.pots,
         required: potOdds, mdfYouOwe: nOpp === 1 ? potBefore / (potBefore + betSize) : null,
         sizeFrac: betSize / potBefore, betSize: betSize, potBefore: potBefore,
         valueExample: sp.topName, airExample: sp.bottomName,
@@ -1088,9 +1117,10 @@ function advisePostflop(g, heroId, opts) {
 
   // When one opponent has bet, their *betting* range is the honest yardstick.
   var decisionEq = vsBluff ? vsBluff.decisionEquity : eq;
+  var sidePots = (vsBluff && vsBluff.pots) || eqRes.pots || null;
   var passiveAlternativeEV = toCall > 0 ? evCallShowdown(pot, toCall, decisionEq) : eq * pot;
   bluffProfitable = !hasLockedOpponent &&
-    bluffEV > passiveAlternativeEV + Math.max(2, pot * 0.01);
+    bluffEV > Math.max(0, passiveAlternativeEV) + Math.max(2, pot * 0.01);
   bluff.profitable = bluffProfitable;
   var chanceToHit = pct(clamp(a.outs * (cardsToCome === 2 ? 4 : 2) / 100, 0, 1));
   bluff.text =
@@ -1104,12 +1134,13 @@ function advisePostflop(g, heroId, opts) {
     " " + (bluff.profitable
       ? "It is also worth more than " + (toCall > 0 ? "just calling" : "checking") +
         ", so over the long run this line returns roughly " + chips(bluffEV) + "."
+      : bluffEV < 0
+        ? "This line loses about " + chips(bluffEV) + " on average; " +
+          (toCall > 0 ? "folding" : "checking") + " costs no additional chips."
       : bluffEV <= passiveAlternativeEV
         ? "The bet may recover some chips, but " + (toCall > 0 ? "calling" : "checking") +
-          " is worth more — about " + chips(passiveAlternativeEV) + " — so there is no reason to turn this hand into a bluff."
-        : bluffEV < -5
-          ? "They do not fold often enough, so over the long run this loses about " + chips(bluffEV) + " each time."
-          : "They do not fold often enough to clear that bar, so at best this is break-even — and there is no reason to take the risk for nothing.");
+          " is worth more — about " + signedChips(passiveAlternativeEV) + " — so there is no reason to turn this hand into a bluff."
+        : "The modeled edge over the alternatives is too small to justify preferring this bluff.");
 
   var madeStrong = a.category >= 2 || a.overPair;
   var nutty = a.category >= 5 || (a.category === 4 && cardsToCome === 0);
@@ -1142,8 +1173,9 @@ function advisePostflop(g, heroId, opts) {
   var thinValueTo = 0, thinValueProfitable = false;
   if (toCall === 0) {
     thinValueTo = betTarget(g, heroId, 0.45);
-    var thinValueCost = Math.max(0, thinValueTo - hero.bet);
-    var thinCallerCost = Math.max(0, thinValueTo - lg.currentBet);
+    var thinCosts = betCosts(g, heroId, thinValueTo);
+    var thinValueCost = thinCosts.cost;
+    var thinCallerCost = thinCosts.caller;
     var thinFE = foldEquity(g, heroId, thinValueCost, pot, ranges, texture, stats, false);
     var thinContinue = clamp(1 - thinFE.all, 0.05, 0.95);
     var thinEqCalled = eqVsContinuing(hero, g.board, ranges, nOpp, thinContinue, iters, rng, eq);
@@ -1313,8 +1345,24 @@ function advisePostflop(g, heroId, opts) {
     }
   }
 
+  if (sidePots && toCall > 0) {
+    action = passiveAlternativeEV > 0 ? "call" : "fold";
+    raiseTo = 0; cls = action; headline = action === "call" ? "CALL " + toCall : "FOLD";
+    plain = action === "call" ? "Call. Your expected share of the separate pots covers the price."
+                              : "Fold. Your expected share of the separate pots does not cover the price.";
+    why = ["Each pot is evaluated against only the players eligible to win it. Your expected payout is " +
+      chips(passiveAlternativeEV + toCall) + " for a call costing " + chips(toCall) +
+      ", a net " + signedChips(passiveAlternativeEV) +
+      (cardsToCome ? " before future betting." : ".")];
+    sidePots.forEach(function (pt, i) {
+      why.push((i ? "Side pot " + i : "Main pot") + ": " + chips(pt.amount) +
+        "; expected share " + pct(pt.equity) + " (" + chips(pt.expectedPayout) + ").");
+    });
+    if (vsBluff) vsBluff.text = why.join(" ");
+  }
   if (a.usesBoardOnly)
-    why.push("Watch out: the best five cards here are all on the table, so your two cards add nothing. The very best you can do is split the pot — and anything that pairs the board beats you outright.");
+    why.push("The best five cards are on the table, so your hole cards add nothing. You split with anyone else playing the board. Only a better five-card hand can beat you." +
+      (a.category === 8 && a.made[1] === 14 ? " This royal flush cannot be beaten; everyone still in shares each pot they are eligible for." : ""));
   if (action === "fold" && lg.canCheck) { action = "check"; headline = "CHECK"; cls = "check"; plain = "Check — it costs you nothing to see the next card."; }
   if (action === "raise" && !lg.canRaise) { action = toCall > 0 ? "call" : "check"; headline = toCall > 0 ? "CALL " + toCall : "CHECK"; cls = "call"; }
   if (action === "raise") raiseTo = clamp(raiseTo, lg.minRaiseTo, lg.maxRaiseTo);
@@ -1330,17 +1378,17 @@ function advisePostflop(g, heroId, opts) {
 
   var statRows = [
     ["What you have", a.madeName + (a.drawText.length ? ", plus a " + a.drawText.join(" and a ") : "")],
-    ["Your chance of winning", pct(eq) + " against " + (nOpp === 1 ? "1 opponent" : nOpp + " opponents")]
+    [sidePots ? "Your expected share of the pots" : "Your chance of winning", pct(eq) + " against " + (nOpp === 1 ? "1 opponent" : nOpp + " opponents")]
   ];
   if (vsBluff) statRows.push([
-    nOpp > 1 ? "...after the bet and other callers" : "...against the hand they just bet",
+    sidePots ? "...after the bet, weighted by pot size" : nOpp > 1 ? "...after the bet and other callers" : "...against the hand they just bet",
     pct(vsBluff.decisionEquity)
   ]);
   if (trap && trap.relevant) {
-    statRows.push([toCall ? "Raising full (long-run)" : "Betting full (long-run)", chips(trap.evBet)]);
+    statRows.push([toCall ? "Raising full (long-run)" : "Betting full (long-run)", signedChips(trap.evBet)]);
     if (trap.evSmall !== null && trap.smallTo)
-      statRows.push([toCall ? "Raising small (long-run)" : "Betting small (long-run)", chips(trap.evSmall)]);
-    statRows.push([toCall ? "Calling (long-run)" : "Checking (long-run)", chips(trap.evTrap)]);
+      statRows.push([toCall ? "Raising small (long-run)" : "Betting small (long-run)", signedChips(trap.evSmall)]);
+    statRows.push([toCall ? "Calling (long-run)" : "Checking (long-run)", signedChips(trap.evTrap)]);
     if (trap.canInduce) statRows.push(["They bet if you look weak", oddsPhrase(trap.pInduce)]);
     if (trap.smallTo && trap.pRaiseSmall)
       statRows.push(["They raise a small bet", oddsPhrase(trap.pRaiseSmall)]);
@@ -1374,7 +1422,7 @@ function advisePostflop(g, heroId, opts) {
     street: g.stage, action: action, raiseTo: raiseTo, headline: headline, cls: cls,
     plain: plain, why: why, equity: eq, decisionEq: decisionEq, pot: pot, totalPot: lg.pot, toCall: toCall,
     potOddsNeeded: potOdds, spr: spr, analysis: a, texture: texture,
-    bluff: bluff, vsBluff: vsBluff, trap: trap, mix: mix,
+    bluff: bluff, vsBluff: vsBluff, trap: trap, mix: mix, sidePots: sidePots,
     ranges: ranges, isBluff: cls === "bluff",
     isTrap: !!(trap && (trap.preferTrap || trap.preferSmall)),
     provenance: prov, stats: statRows
@@ -1385,6 +1433,24 @@ function advise(g, heroId, opts) {
   opts = opts || {};
   if (!g || g.handOver || g.actionOn !== heroId) return null;
   var r = g.board.length === 0 ? advisePreflop(g, heroId, opts) : advisePostflop(g, heroId, opts);
+  if (r.street === "preflop" && r.toCall > 0 && r.provenance.pots) {
+    r.sidePots = r.provenance.pots;
+    var payout = r.sidePots.reduce(function (sum, pt) { return sum + pt.expectedPayout; }, 0);
+    r.action = payout > r.toCall ? "call" : "fold";
+    r.raiseTo = 0; r.cls = r.action; r.isBluff = false;
+    r.headline = r.action === "call" ? "CALL " + r.toCall : "FOLD";
+    r.plain = "Compare your expected share of each separate pot with the call price.";
+    r.why = ["The pots have different eligible opponents. The expected payout is " + chips(payout) +
+      " for a call costing " + chips(r.toCall) + ", a net " + signedChips(payout - r.toCall) +
+      " before future betting. This is a showdown benchmark; players behind may still raise."];
+  }
+  if (r.sidePots) r.stats.forEach(function (row) {
+    if (row[0] === "Your chance of winning") row[0] = "Your expected share of the pots";
+    if (row[0] === "You'd need to win") {
+      row[0] = "Break-even share of the pots";
+      row[1] = r.toCall ? pct1(r.potOddsNeeded) : "—";
+    }
+  });
   r.legal = g.legal(heroId);
   r.audit = {
     solverCertified: false,

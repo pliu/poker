@@ -1,13 +1,7 @@
-/* solver.js — an additive equilibrium baseline for spots small enough to solve
-   honestly in the browser.
-
-   This is NOT a full no-limit Hold'em solver. It solves a deliberately small
-   river abstraction: heads-up, one bet size, and no later betting. That model
-   has an analytical equilibrium, so the UI can compare the practical coach to
-   a balanced opponent without dressing another heuristic up as "GTO".
-
-   Unsupported streets and multiway pots return an explicit reason. The public
-   serializeSpot() boundary is also the adapter a future external solver can use. */
+/* solver.js — hypothetical river response benchmark, not an equilibrium solver.
+   Fixed MDF-derived frequencies describe an assumed opponent. They do not
+   establish optimal play for the actual ranges. serializeSpot remains the
+   adapter boundary for a future external solver. */
 var SolverBaseline = (function (P, R, D) {
 "use strict";
 
@@ -19,22 +13,24 @@ function serializeSpot(g, heroId) {
 function unsupported(reason, spot) {
   return {
     status: "unsupported",
-    label: "No solver baseline for this spot",
+    label: "No river response benchmark for this spot",
     reason: reason,
     spot: spot,
     scope: "The built-in baseline currently covers heads-up river decisions with one bet size."
   };
 }
 
-/* Facing one river bet. At equilibrium the bettor's bluff share equals the
-   caller's break-even price. Value and bluff slices are built independently
-   from the shared inferred range, not copied from the practical coach. */
+/* Facing one river bet, assume a bluff share equal to the caller's price.
+   This is a sensitivity benchmark, not a solution for the actual ranges. */
 function facingRiverBet(g, heroId, context, spot) {
   var hero = g.players[heroId];
   var potWithBet = context.legal.contestablePot;
   var call = context.legal.toCall;
   if (hero.bet !== 0 || call <= 0 || potWithBet <= call)
     return unsupported("Raises and previously invested river bets are outside the one-bet abstraction.", spot);
+  var bettor = g.live().filter(function (p) { return p.id !== heroId; })[0];
+  if (bettor.bet !== call)
+    return unsupported("Unequal all-in sizing is outside the one-bet abstraction.", spot);
 
   var potBefore = potWithBet - call;
   var price = call / (potWithBet + call);
@@ -52,12 +48,13 @@ function facingRiverBet(g, heroId, context, spot) {
 
   return {
     status: "supported",
+    solverCertified: false,
     kind: "river-facing-bet",
-    label: "One-bet river equilibrium",
+    label: "Hypothetical river response model",
     action: action,
     actionText: indifferent ? "CALL OR FOLD (approximately indifferent)"
               : action === "call" ? "CALL " + call : "FOLD",
-    equilibriumBluffPct: price,
+    assumedBluffPct: price,
     minimumDefence: defend,
     equityVsBalancedBet: eqBalanced,
     requiredEquity: price,
@@ -65,29 +62,31 @@ function facingRiverBet(g, heroId, context, spot) {
       { action: "Call", ev: callEV },
       { action: "Fold", ev: 0 }
     ],
-    calculation: "A balanced bettor uses " + Math.round(price * 100) +
+    calculation: "This hypothetical bettor uses " + Math.round(price * 100) +
       "% bluffs at this size. Against the displayed value and bluff slices, this hand wins " +
       Math.round(eqBalanced * 100) + "% and needs " + (price * 100).toFixed(1) + "%.",
-    scope: "Uses the analytical equilibrium for the displayed one-bet river abstraction; hand values come from the estimated range, while raises and the earlier game tree are omitted.",
+    scope: "A fixed response assumption, not a solved equilibrium. The bluff share is set from pot odds; hand slices, raises and the earlier game tree are not solved.",
     assumptions: [
       "The opponent's starting range and its value/bluff hand slices are still estimates.",
-      "The opponent is balanced rather than following their observed bluff tendency.",
+      "The assumed bluff frequency need not be feasible or optimal for the actual ranges.",
       "Only call and fold are compared."
     ],
     spot: spot
   };
 }
 
-/* Checked to on the river. Compare checking with one candidate bet into an
-   opponent who defends at the equilibrium frequency and keeps the strongest
-   part of their range. This is a best response inside the abstraction, not a
-   claim that the chosen size is optimal among every possible chip amount. */
+/* Checked to on the river: compare checking with one candidate bet into an
+   opponent assumed to defend the strongest MDF-sized slice of their range. */
 function checkedToOnRiver(g, heroId, context, spot) {
   var hero = g.players[heroId];
   var lg = g.legal(heroId);
   var opp = g.live().filter(function (p) { return p.id !== heroId; })[0];
   if (!lg || !lg.canCheck || g.currentBet !== 0 || hero.bet !== 0)
     return unsupported("The current river action is not a clean check-or-bet decision.", spot);
+
+  var order = g._streetOrder();
+  if (order[order.length - 1] !== heroId)
+    return unsupported("Checking does not close the river action; later bets are outside this response model.", spot);
 
   var step = Math.max(1, Math.round(g.bb / 2));
   var betTo = Math.round((context.legal.contestablePot * 0.66) / step) * step;
@@ -119,26 +118,27 @@ function checkedToOnRiver(g, heroId, context, spot) {
 
   return {
     status: "supported",
+    solverCertified: false,
     kind: "river-checked-to",
-    label: "One-bet river equilibrium",
+    label: "Hypothetical river response model",
     action: action,
     actionText: indifferent ? "BET OR CHECK (approximately indifferent)"
               : action === "raise" ? "BET " + betTo : "CHECK",
     betTo: betTo,
-    equilibriumBluffPct: bluffShare,
+    assumedBluffPct: bluffShare,
     minimumDefence: defend,
     equityWhenCalled: eqCalled,
     evs: [
       { action: "Bet " + betTo, ev: betEV },
       { action: "Check", ev: checkEV }
     ],
-    calculation: "At this size a balanced opponent continues with " + Math.round(defend * 100) +
+    calculation: "This hypothetical opponent continues with " + Math.round(defend * 100) +
       "% of their range. This hand wins " + Math.round(eqCalled * 100) +
       "% against that strongest slice.",
-    scope: "Uses equilibrium defence for one candidate bet versus check on the river; hand values come from the estimated range, while check-raises, other sizes and the earlier game tree are omitted.",
+    scope: "A fixed MDF-based response assumption, not a solved equilibrium. Compares one bet size with checking; check-raises, other sizes and the earlier game tree are omitted.",
     assumptions: [
       "The opponent's starting range is estimated from the same evidence shown by the coach.",
-      "The opponent calls with the strongest hands at the equilibrium defence frequency.",
+      "The opponent is assumed to call the strongest hands at the MDF frequency; actual optimal defence may differ.",
       "Only the displayed bet size and checking are compared."
     ],
     spot: spot
@@ -154,7 +154,19 @@ function analyse(g, heroId, advice, opts) {
   if (g.stage !== "river" || g.board.length !== 5)
     return unsupported("Future cards require a multi-street game tree, which the built-in baseline does not pretend to solve.", spot);
   if (g.live().length !== 2)
-    return unsupported("Multiway equilibrium solving is not supported by the built-in baseline.", spot);
+    return unsupported("Multiway response modeling is not supported by the built-in baseline.", spot);
+  // If no legal holding can improve the board, folding a guaranteed share
+  // cannot be justified by MDF. Do not fabricate fold equity in this case.
+  var boardScore = P.evaluate(g.board);
+  var pool = P.newDeck().filter(function (c) {
+    return !g.board.some(function (b) { return P.cardId(b) === P.cardId(c); });
+  });
+  var canImprove = false;
+  for (var i = 0; i < pool.length && !canImprove; i++)
+    for (var j = i + 1; j < pool.length && !canImprove; j++)
+      canImprove = P.cmpEval(P.evaluate(g.board.concat([pool[i], pool[j]])), boardScore) > 0;
+  if (!canImprove)
+    return unsupported("The board guarantees a shared hand. An MDF fold assumption is inappropriate for a guaranteed chop.", spot);
   if (context.legal.toCall > 0) return facingRiverBet(g, heroId, context, spot);
   return checkedToOnRiver(g, heroId, context, spot);
 }

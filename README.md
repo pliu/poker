@@ -50,7 +50,7 @@ reasoning for a set of textbook spots so you can read it and disagree.
 | `exploit.js`   | Opponent fold/future-bet models and explanation of deviations from balance. Pure. |
 | `context.js`   | The shared decision snapshot and external-solver serialization boundary. Pure. |
 | `coach.js`     | Practical fallback advice, price/EV arithmetic, bluff-catching, and compatibility exports. Pure. |
-| `solver.js`    | Independent equilibrium baseline for supported heads-up river abstractions. Pure. |
+| `solver.js`    | Hypothetical response benchmark for supported heads-up river decisions. Pure. |
 | `teaching.js`  | Spot-specific hand stories, alternative-line comparisons, tipping points, and reusable lessons. Pure. |
 | `strategy.js`  | Orchestrates context → coach/baseline → opponent adjustment → final explanation. Pure. |
 | `bots.js`      | Opponent AI and the observed-stats tracker. Pure. |
@@ -96,23 +96,21 @@ move the model prefers under those assumptions, not a solved equilibrium. A real
 build the complete game tree and jointly optimise every hand in every player's
 strategy; this app does not do that.
 
-The separate **solver baseline** makes a narrower comparison where the app can
-do so honestly. In a heads-up river decision it removes future cards and limits
-the tree to one bet size. The equilibrium bluff and defence frequencies for
-that abstraction follow directly from the pot and bet size; the app then shows
-the chip value of each supported action and whether the practical coach agrees.
-The opponent's starting range remains an estimate and is displayed alongside
-the result. Earlier streets, multiway pots, prior river raises, unequal all-ins,
-and extra bet sizes are explicitly marked unsupported instead of receiving a
-heuristic with a solver label. `SolverBaseline.serializeSpot()` provides the
-boundary for replacing this baseline with an external full-tree solver later.
+The separate **river response benchmark** compares actions against an explicitly
+hypothetical opponent. It assumes a bluff share derived from pot odds when facing
+a bet, or an MDF-sized continuing range when checked to. Those frequencies are
+assumptions, not a solved equilibrium for the displayed ranges. The panel shows
+action values under those assumptions and whether the practical coach agrees.
+Earlier streets, multiway pots, prior river raises, unequal all-ins, guaranteed
+chops, and checks that leave another player to act are marked unsupported.
+`SolverBaseline.serializeSpot()` remains the boundary for a future external solver.
 
 The live recommendation now runs through an explicit strategy pipeline:
 
 ```text
 DecisionContext (public state + observed stats)
     ├─ RangeModel          → inferred hand sets
-    ├─ SolverBaseline      → balanced reference, when supported
+    ├─ SolverBaseline      → hypothetical response benchmark, when supported
     └─ Coach               → practical fallback recommendation
              ↓
        ExploitModel        → explains opponent-specific deviation
@@ -122,7 +120,7 @@ DecisionContext (public state + observed stats)
 
 The range snapshot is constructed once and shared; the solver no longer copies
 the coach's value/bluff result. Each final recommendation records whether the
-balanced layer was supported, whether an opponent adjustment was made, and
+response benchmark was supported, whether an opponent adjustment was made, and
 whether the practical coach was used as a fallback. Compatibility exports on
 `Coach` keep existing bot and test callers working while the implementations
 remain separated.
@@ -324,3 +322,22 @@ not a simulation of every future card.
     1 in 3,200 and 1 in 600.
 23. **Set-mining wanted only 10× behind.** The rule now asks for about 15×,
     since a flopped set does not get paid every time.
+
+## Further correctness fixes
+
+- Call equity scores each main/side pot against its eligible opponents in the
+  same sampled deal, preserving card removal across all live hands. The displayed
+  percentage in these spots is the expected share weighted by pot size. Side-pot
+  calls use expected payout minus call cost; this remains a showdown benchmark
+  before future betting, not a solved raise strategy.
+- Bluff profitability includes folding at zero additional cost, and displayed
+  chip returns preserve losses. Bet sizes and modeled contributions respect
+  effective stacks, including returned excess on minimum bets against short stacks.
+- Odd chips are distributed one at a time to tied winners clockwise from the
+  button. Betting ends when the sole remaining live stack has nothing left to
+  call, and raising requires another stack that can respond.
+- Playing-the-board explanations compare five-card hands rather than claiming
+  a pair beats any board. Hand transcripts retain the original starting stacks
+  after both showdown and uncontested payouts.
+
+These cases are covered by `test/audit_regressions.js`, loaded by the main suite.

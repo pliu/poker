@@ -357,7 +357,7 @@ function mkGame(stacks, button, seed) {
   var g = mkGame([600, 2000, 2000, 2000], 0).startHand();
   g.act(3, "raise", 200);
   g.act(0, "raise", 600);          // full raise (+400 >= 180)
-  g.act(1, "fold"); g.act(2, "fold");
+  g.act(1, "call"); g.act(2, "fold"); // keep a live stack available to face a re-raise
   ok("P3 CAN re-raise a full all-in raise", g.legal(3).canRaise);
 })();
 
@@ -472,7 +472,7 @@ function mkGame(stacks, button, seed) {
     g.act(0, "raise", 100);
     g.act(1, "raise", 130);
     g.act(2, "raise", g.players[2].bet + g.players[2].chips);
-    g.act(3, "fold");
+    g.act(3, "call"); // reopening matters only while another player can respond
     return g;
   }
   var a = play(170);
@@ -1411,10 +1411,10 @@ section("solver overlay — honest river abstraction");
   var advice = Coach.advise(facing, 0, { iters: 700, rng: Poker.mulberry32(19) });
   var solved = SolverBaseline.analyse(facing, 0, advice);
   eq("heads-up river facing one bet is supported", solved.status, "supported");
-  eq("supported node identifies the analytical abstraction", solved.kind, "river-facing-bet");
-  ok("equilibrium bluff share equals the caller's break-even price",
-     Math.abs(solved.equilibriumBluffPct - advice.potOddsNeeded) < 1e-12,
-     solved.equilibriumBluffPct + " vs " + advice.potOddsNeeded);
+  eq("supported node identifies the response model", solved.kind, "river-facing-bet");
+  ok("assumed bluff share equals the caller's break-even price",
+     Math.abs(solved.assumedBluffPct - advice.potOddsNeeded) < 1e-12,
+     solved.assumedBluffPct + " vs " + advice.potOddsNeeded);
   ok("solver baseline reports both call and fold EV", solved.evs.length === 2 &&
      solved.evs[0].action === "Call" && solved.evs[1].action === "Fold",
      JSON.stringify(solved.evs));
@@ -1548,6 +1548,8 @@ section("solver overlay — honest river abstraction");
        JSON.stringify(explained));
   })();
 })();
+
+load("test/audit_regressions.js");
 
 section("play-by-play transcript");
 (function pbp() {

@@ -60,7 +60,7 @@ function postflopComparisons(advice) {
     out.push(line("Fold", 0, "future result from this decision; chips already committed are sunk"));
     out.push(line("Call", callEV,
       advice.street === "river" ? "no future betting remains" : "showdown benchmark before future betting"));
-    if (advice.bluff && advice.legal && advice.legal.canRaise)
+    if (!advice.sidePots && advice.bluff && advice.legal && advice.legal.canRaise)
       out.push(line("Raise to " + advice.bluff.size, advice.bluff.ev,
         "uses the model's fold estimate and equity when called"));
   } else {
@@ -84,7 +84,7 @@ function preflopComparisons(advice) {
     out.push({ label: "Hands played from this seat", value: "about top " + pct(advice.openThreshold),
       note: advice.position });
   if (advice.decisionOpponents)
-    out.push({ label: "Simulated showdown chance", value: pct(advice.decisionEq),
+    out.push({ label: advice.sidePots ? "Expected share of the pots" : "Simulated showdown chance", value: pct(advice.decisionEq),
       note: "against " + advice.decisionOpponents +
         (advice.decisionOpponents === 1 ? " estimated opponent range" : " estimated opponent ranges") });
   return out;
@@ -107,6 +107,9 @@ function trapTipping(advice) {
 }
 
 function tippingPoint(context, advice) {
+  if (advice.sidePots)
+    return "Compare the sum of your expected payouts from each eligible pot with the call cost of " +
+      advice.toCall + " chips. You can lose the main pot and still profit by winning a side pot.";
   if (advice.trap && advice.trap.relevant) return trapTipping(advice);
 
   if (advice.street === "preflop" && !advice.facingRaise && advice.openThreshold !== undefined) {
@@ -149,6 +152,8 @@ function tippingPoint(context, advice) {
 }
 
 function takeaway(advice) {
+  if (advice.sidePots)
+    return "Reusable rule: score each pot against its eligible players. A short all-in hand cannot win the deeper players' side pot.";
   if (advice.street === "preflop")
     return "Reusable rule: starting cards are not a fixed verdict. Position, price, players behind, and stack depth determine whether the same hand is playable.";
   if (advice.trap && advice.trap.relevant)

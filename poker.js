@@ -339,7 +339,7 @@ function sampleRange(pool, poolN, sampler, rng) {
   return a < 0 || b < 0 ? null : [a, b];
 }
 
-function equity(hole, board, oppRanges, iters, rng) {
+function equity(hole, board, oppRanges, iters, rng, payoutPots) {
   rng = rng || defaultRng;
   iters = iters || 800;
   var pool = livePool(hole, board);
@@ -353,6 +353,7 @@ function equity(hole, board, oppRanges, iters, rng) {
   var runout = new Array(need);
   var oh = new Array(nOpp);
   var wins = 0, ties = 0, losses = 0, equitySum = 0, n = 0;
+  var potSums = (payoutPots || []).map(function () { return 0; });
   var i, k, o, t;
 
   for (var it = 0; it < iters; it++) {
@@ -386,20 +387,58 @@ function equity(hole, board, oppRanges, iters, rng) {
     var full = board.concat(runout);
     var mine = evaluate(hole.concat(full));
     var tiedWith = 0, beaten = false;
+    var comparisons = [];
     for (o = 0; o < nOpp; o++) {
       var cmp = cmpEval(mine, evaluate(oh[o].concat(full)));
-      if (cmp < 0) { beaten = true; break; }
+      comparisons[o] = cmp;
+      if (cmp < 0) { beaten = true; if (!payoutPots) break; }
       if (cmp === 0) tiedWith++;
     }
     if (beaten) losses++;
     else if (tiedWith) { ties++; equitySum += 1 / (tiedWith + 1); }
     else { wins++; equitySum += 1; }
+    (payoutPots || []).forEach(function (pt, pi) {
+      var tiesInPot = 0, losesPot = false;
+      pt.opponents.forEach(function (oi) {
+        if (comparisons[oi] < 0) losesPot = true;
+        if (comparisons[oi] === 0) tiesInPot++;
+      });
+      if (!losesPot) potSums[pi] += 1 / (1 + tiesInPot);
+    });
     n++;
   }
   var d = n || 1;
-  return { win: wins / d, tie: ties / d, lose: losses / d,
+  var result = { win: wins / d, tie: ties / d, lose: losses / d,
            equity: n ? equitySum / n : 0.5,
            tieEquity: n ? (equitySum - wins) / n : 0, iters: n };
+  if (payoutPots && n) {
+    var total = 0, payout = 0;
+    result.pots = payoutPots.map(function (pt, pi) {
+      var share = potSums[pi] / n;
+      total += pt.amount; payout += pt.amount * share;
+      return { amount: pt.amount, equity: share, expectedPayout: pt.amount * share };
+    });
+    result.showdownEquity = result.equity;
+    result.equity = total ? payout / total : result.equity;
+    result.expectedPayout = payout;
+  }
+  return result;
+}
+
+/* Sample all hidden hands together, then score each pot only against its
+   eligible opponents. Short-stack cards still block the side-pot ranges. */
+function equityForCall(g, id, ranges, iters, rng) {
+  var pots = g.callPots(id);
+  var ids = ranges.map(function (r) { return (r.isBoardModel ? r.base : r).id; });
+  var differentOpponents = pots.length > 1 && g.live().some(function (p) {
+    return p.id !== id && p.allIn && p.committed < g.players[id].committed + g.toCall(g.players[id]);
+  });
+  var payoutPots = differentOpponents ? pots.map(function (pt) {
+    return { amount: pt.amount, opponents: ids.map(function (pid, i) {
+      return pt.eligible.indexOf(pid) >= 0 ? i : -1;
+    }).filter(function (i) { return i >= 0; }) };
+  }) : null;
+  return equity(g.players[id].hole, g.board, ranges, iters, rng, payoutPots);
 }
 
 /* Sample a random 2-card hand from `pool` inside a range band. Pass a
@@ -651,6 +690,12 @@ Game.prototype.seated = function () { return this.players.filter(function (p) { 
 Game.prototype.live = function () { return this.players.filter(function (p) { return !p.folded && !p.sittingOut; }); };
 Game.prototype.canAct = function (p) { return !p.folded && !p.allIn && !p.sittingOut; };
 Game.prototype.actors = function () { var g = this; return this.players.filter(function (p) { return g.canAct(p); }); };
+Game.prototype._noBettingNeeded = function () {
+  var actors = this.actors();
+  return actors.length === 0 || (actors.length === 1 && this.live().every(function (p) {
+    return p.bet <= actors[0].bet;
+  }));
+};
 Game.prototype.pot = function () {
   return this.players.reduce(function (t, p) { return t + p.committed; }, 0);
 };
@@ -668,6 +713,31 @@ Game.prototype.contestablePot = function (id, additional) {
     if (q.id === id) return total + q.committed;
     return total + Math.min(q.committed, finalCommit);
   }, 0);
+};
+
+Game.prototype.callPots = function (id) {
+  var hero = this.players[id], self = this;
+  var finalCommit = hero.committed + this.toCall(hero);
+  var levels = [finalCommit];
+  this.players.forEach(function (p) {
+    if (p.committed > 0 && p.committed < finalCommit && levels.indexOf(p.committed) < 0)
+      levels.push(p.committed);
+  });
+  levels.sort(function (a, b) { return a - b; });
+  var prev = 0, pots = [];
+  levels.forEach(function (level) {
+    var amount = 0, eligible = [];
+    self.players.forEach(function (p) {
+      var committed = p.id === id ? finalCommit : p.committed;
+      amount += Math.max(0, Math.min(committed, level) - prev);
+      if (committed >= level && !p.folded && !p.sittingOut) eligible.push(p.id);
+    });
+    var last = pots[pots.length - 1];
+    if (amount && last && last.eligible.join(',') === eligible.join(',')) last.amount += amount;
+    else if (amount) pots.push({ amount: amount, eligible: eligible });
+    prev = level;
+  });
+  return pots;
 };
 
 Game.prototype.nextSeated = function (from) { return this._nextSeated(from); };
@@ -735,6 +805,7 @@ Game.prototype.startHand = function () {
   this.preflopRaiser = null;
 
   this.players.forEach(function (p) {
+    p.startingChips = p.chips;
     p.sittingOut = p.chips <= 0;
     p.hole = []; p.folded = p.sittingOut; p.allIn = false;
     p.bet = 0; p.committed = 0; p.hasActed = false; p.raiseLocked = false; p.actedAtBet = null;
@@ -779,7 +850,7 @@ Game.prototype.startHand = function () {
   // blinds have "posted" but have not acted
   this.players.forEach(function (p) { p.hasActed = false; });
   this.actionOn = headsUp ? this.button : this._nextSeated(bbIdx);
-  if (!this.canAct(this.players[this.actionOn])) this._settleIfNoActors();
+  if (this._noBettingNeeded() || !this.canAct(this.players[this.actionOn])) this._settleIfNoActors();
   return this;
 };
 
@@ -806,7 +877,9 @@ Game.prototype.legal = function (id) {
     canCheck: toCall === 0,
     canCall: toCall > 0,
     canFold: true,
-    canRaise: !p.raiseLocked && maxTo > this.currentBet,
+    canRaise: !p.raiseLocked && maxTo > this.currentBet && this.actors().some(function (q) {
+      return q.id !== id && q.bet + q.chips > this.currentBet;
+    }, this),
     minRaiseTo: minTo,
     maxRaiseTo: maxTo,
     isAllInRaise: minTo >= maxTo,
@@ -910,6 +983,7 @@ Game.prototype._betRoundClosed = function () {
 Game.prototype._advance = function () {
   var self = this;
   if (this.live().length === 1) return this._endUncontested();
+  if (this._noBettingNeeded()) return this._settleIfNoActors();
 
   if (!this._betRoundClosed()) {
     // find next player who still owes an action, in seat order after actionOn
@@ -936,9 +1010,7 @@ Game.prototype._settleIfNoActors = function () {
 
   // If at most one player can still bet, there is nothing left to decide:
   // run the remaining board out and go to showdown.
-  var canStillBet = live.filter(function (p) { return !p.allIn; });
-  var allSquare = live.every(function (p) { return p.allIn || p.bet === self.currentBet; });
-  if (canStillBet.length <= 1 && allSquare) {
+  if (this._noBettingNeeded()) {
     this._emit({ type: "runout" });
     while (this.board.length < 5) this._dealStreet();
     return this._showdown();
@@ -1029,10 +1101,14 @@ Game.prototype._showdown = function () {
     var best = null;
     elig.forEach(function (id) { if (!best || cmpEval(scores[id], best) > 0) best = scores[id]; });
     var winners = elig.filter(function (id) { return cmpEval(scores[id], best) === 0; });
+    winners.sort(function (a, b) {
+      var n = self.players.length;
+      return (a - self.button - 1 + n) % n - (b - self.button - 1 + n) % n;
+    });
     var share = Math.floor(pt.amount / winners.length);
     var rem = pt.amount - share * winners.length;
     winners.forEach(function (id, wi) {
-      var amt = share + (wi === 0 ? rem : 0);
+      var amt = share + (wi < rem ? 1 : 0);
       self.players[id].chips += amt;
       awards.push({ player: id, name: self.players[id].name, amount: amt,
                     potIndex: pi, potName: pi === 0 ? "Main pot" : "Side pot " + pi,
@@ -1071,7 +1147,7 @@ Game.prototype.playByPlay = function (opts) {
   lines.push("Game: No-Limit Texas Hold'em, blinds " + this.sb + "/" + this.bb +
              ", " + seated.length + " players.");
   lines.push("Stacks at the start of this hand: " + this.players.map(function (p) {
-    return p.name + " " + (p.chips + (p.investedThisHand || 0));
+    return p.name + " " + p.startingChips;
   }).join(", ") + ".");
   lines.push("Dealer button: " + this.players[this.button].name + ".");
   var hero = this.players.filter(function (p) { return p.isHuman; })[0];
@@ -1121,7 +1197,7 @@ return {
   bestFive: bestFive, straightHigh: straightHigh,
   handCode: handCode, handPct: handPct, codePct: codePct, boardRange: boardRange,
   rankWord: rankWord, rankPlural: rankPlural,
-  equity: equity, analyseHand: analyseHand, boardTexture: boardTexture,
+  equity: equity, equityForCall: equityForCall, analyseHand: analyseHand, boardTexture: boardTexture,
   sampleFromRange: sampleFromRange, equityVsHands: equityVsHands,
   splitRangeEquity: splitRangeEquity,
   mulberry32: mulberry32, Game: Game

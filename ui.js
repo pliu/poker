@@ -614,13 +614,23 @@ function provenanceHTML(a) {
   bullets.push("<li>then it worked out who would have won.</li>");
   lines.push("<ul>" + bullets.join("") + "</ul>");
 
-  lines.push("<p>Out of " + n(p.deals) + " deals you won <b>" + n(p.won) + "</b>" +
-    (p.tied ? ", tied <b>" + n(p.tied) + "</b>" : "") + " and lost <b>" + n(p.lost) + "</b> — " +
-    (p.tied && p.ranges.length > 1
-      ? "with tied pots divided among everyone sharing them. Those exact pot shares produce the "
-      : "which is where the ") + Math.round(eqShown * 100) + "% result. " +
-    "Run it again and you'd get something within about " +
-    (p.margin * 100).toFixed(1) + " percentage points of that.</p>");
+  if (p.pots) {
+    lines.push("<p>The app scores each pot against its eligible players in the same simulated deal. " +
+      "The displayed " + Math.round(eqShown * 100) + "% is the expected share weighted by pot size, " +
+      "not the chance of beating every opponent.</p>");
+    p.pots.forEach(function (pt, i) {
+      lines.push("<p>" + (i ? "Side pot " + i : "Main pot") + ": " + n(pt.amount) +
+        " chips × " + Math.round(pt.equity * 100) + "% = about " + n(Math.round(pt.expectedPayout)) + " chips.</p>");
+    });
+  } else {
+    lines.push("<p>Out of " + n(p.deals) + " deals you won <b>" + n(p.won) + "</b>" +
+      (p.tied ? ", tied <b>" + n(p.tied) + "</b>" : "") + " and lost <b>" + n(p.lost) + "</b> — " +
+      (p.tied && p.ranges.length > 1
+        ? "with tied pots divided among everyone sharing them. Those exact pot shares produce the "
+        : "which is where the ") + Math.round(eqShown * 100) + "% result. " +
+      "Run it again and you'd get something within about " +
+      (p.margin * 100).toFixed(1) + " percentage points of that.</p>");
+  }
 
   lines.push('<p class="caveat">The deal count gives the sampling error above. The larger uncertainty is the ' +
     "range assumption: if somebody is raising far wider than the app thinks, running more deals will " +
@@ -648,11 +658,11 @@ function solverHTML(a) {
   var s = a.solver;
   if (!s) return "";
   if (s.status !== "supported") {
-    return '<div class="card-box solver-card"><h3>Solver baseline' +
+    return '<div class="card-box solver-card"><h3>River response benchmark' +
       '<span class="pill r">unsupported spot</span></h3><p>' + s.reason + '</p>' +
-      working("What can the built-in baseline solve?", '<p>' + s.scope +
-        '</p><p>Unsupported does not mean the coach is wrong. It means there is no honest equilibrium ' +
-        'comparison available here yet.</p>') + '</div>';
+      working("What does the response benchmark cover?", '<p>' + s.scope +
+        '</p><p>Unsupported does not mean the coach is wrong. It means this hypothetical response ' +
+        'comparison does not cover this spot.</p>') + '</div>';
   }
 
   var agree = s.coachAgrees;
@@ -665,10 +675,10 @@ function solverHTML(a) {
     h += '<div class="row"><span>' + line.action + ' in this abstraction</span><b>' +
       (line.ev >= 0 ? "+" : "") + Math.round(line.ev) + ' chips</b></div>';
   });
-  h += '<div class="row"><span>Balanced opponent keeps playing</span><b>' +
+  h += '<div class="row"><span>Assumed opponent keeps playing</span><b>' +
     Math.round(s.minimumDefence * 100) + '% of hands</b></div>' +
-    '<div class="row"><span>Balanced betting range uses</span><b>' +
-    Math.round(s.equilibriumBluffPct * 100) + '% bluffs</b></div>' +
+    '<div class="row"><span>Assumed betting range uses</span><b>' +
+    Math.round(s.assumedBluffPct * 100) + '% bluffs</b></div>' +
     working("Scope and assumptions", '<p>' + s.scope + '</p><ul>' +
       s.assumptions.map(function (x) { return '<li>' + x + '</li>'; }).join("") + '</ul>') +
     '</div>';
@@ -791,9 +801,9 @@ function showCoach(a) {
   if (a.street !== "preflop") {
     var eqShown = a.decisionEq !== undefined ? a.decisionEq : a.equity;
     var good = eqShown > (a.potOddsNeeded || 0);
-    h += '<div class="card-box"><h3>' + (a.toCall ? "Your chances vs the price" : "How often you win") + "</h3>" +
+    h += '<div class="card-box"><h3>' + (a.sidePots ? "Your share of the pots vs the price" : a.toCall ? "Your chances vs the price" : "How often you win") + "</h3>" +
       meter(eqShown, a.toCall ? a.potOddsNeeded : null, good ? "var(--green)" : "var(--red)") +
-      '<div class="meter-lbl"><span>you win ' + Math.round(eqShown * 100) + "% of the time</span><span>" +
+      '<div class="meter-lbl"><span>' + (a.sidePots ? 'expected pot share ' : 'you win ') + Math.round(eqShown * 100) + (a.sidePots ? '%</span><span>' : '% of the time</span><span>') +
       (a.toCall ? "white line = the " + (a.potOddsNeeded * 100).toFixed(0) + "% you need" : "nothing to call") +
       "</span></div>" +
       (a.toCall ? "<p style='margin-top:8px'>" + (good
@@ -812,7 +822,7 @@ function showCoach(a) {
   h += adjustmentHTML(a);
 
   // would a bluff work?
-  if (a.bluff && (a.bluff.relevant || a.isBluff)) {
+  if (!a.sidePots && a.bluff && (a.bluff.relevant || a.isBluff)) {
     var b = a.bluff;
     h += '<div class="card-box bluff"><h3>Would a bluff work here?' +
       '<span class="pill ' + (b.profitable ? "g" : "r") + '">' + (b.profitable ? "yes" : "no") + "</span></h3>" +
@@ -836,7 +846,7 @@ function showCoach(a) {
       '<div class="row"><span>If they are bluffing, you win</span><b>' + Math.round(v.eqVsAir * 100) + "%</b></div>" +
       '<div class="row"><span>Against that bettor heads-up, you win</span><b>' + Math.round(v.eqVsPolarised * 100) + "%</b></div>" +
       (Math.abs(v.decisionEquity - v.eqVsPolarised) > 0.005
-        ? '<div class="row"><span>Including the other players, you win</span><b>' + Math.round(v.decisionEquity * 100) + "%</b></div>"
+        ? '<div class="row"><span>' + (a.sidePots ? 'Expected share across eligible pots' : 'Including the other players, you win') + '</span><b>' + Math.round(v.decisionEquity * 100) + "%</b></div>"
         : "") +
       '<div class="row"><span>And you need</span><b>' + (v.required * 100).toFixed(1) + "%</b></div>" +
       (v.mdfYouOwe !== null
@@ -1114,11 +1124,11 @@ function transcript() {
       t += "\n  Reliability: " + pending.audit.label + ". " + pending.audit.limitation;
     if (pending.solver) {
       if (pending.solver.status === "supported") {
-        t += "\n  River equilibrium baseline: " + pending.solver.actionText +
+        t += "\n  Hypothetical river response model: " + pending.solver.actionText +
              "; coach " + (pending.solver.coachAgrees ? "agrees" : "differs") + ". " +
              pending.solver.scope;
       } else {
-        t += "\n  Solver baseline unavailable for this spot: " + pending.solver.reason;
+        t += "\n  River response benchmark unavailable for this spot: " + pending.solver.reason;
       }
     }
     if (pending.adjustment)
