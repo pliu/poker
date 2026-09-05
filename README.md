@@ -175,7 +175,7 @@ somebody would play *this way*. So:
 
 - Preflop, a hand that is too weak for *this* pot can still be a call for the
   pot it wins when it hits something they will not expect. Small pairs (22–77)
-  call a raise to flop a set (~1 in 8) when ~10× the call remains behind.
+  call a raise to flop a set (~1 in 8) when ~15× the call remains behind.
   Suited connectors / one-gappers and wheel aces (A2s–A5s) do the same from
   late position or the big blind, a bit more expensively. Short stacks, 3-bet
   pots without depth, offsuit junk, and suited hands out of the small blind
@@ -289,3 +289,38 @@ not a simulation of every future card.
     loop over `seated().length`. Covered by tests over all twelve
     elimination/button combinations, plus a 400-hand session in which 367 hands ran
     short-handed.
+
+## Calibration fixes from the coaching audit
+
+16. **Opponents were assumed to fold 25% more than the price demands.** With no
+    history, the fold model multiplied the minimum-defence continue rate by
+    0.75, so a two-thirds-pot flop bet was assumed to fold 60% of hands where
+    the price says 40%. Every bluff and semi-bluff looked better than it was,
+    and every value line worse. The default is now anchored on the
+    minimum-defence rate; observed looseness and board texture move it.
+17. **River bettors were assumed to over-bluff.** The default bluff share sat
+    five to eight points above the balanced share for the size, so ace-high
+    called three-quarters pot with a plain CALL. The default is now the
+    balanced share, `b / (p + 2b)`, adjusted by observed aggression; a spot
+    within a couple of points of break-even says so in both directions.
+18. **A raise of a small bet was valued against the betting range.** The
+    small-bet trap line credited the hero with the same win rate against a
+    re-raise as against the original bet. Raising ranges are stronger; the line
+    now measures against a narrower value slice plus thinner bluffs.
+19. **The coach read the bot's persona.** The future-bet estimate used the
+    programmed c-bet and aggression until twelve hands had been observed. It now
+    uses only the observed statistics, the same evidence the player can see.
+20. **The big blind raised 55% of hands over a limp.** The open threshold was
+    reused as an isolation threshold, and the copy claimed the big blind would
+    act last after the flop. Blinds now raise about their best 20–24% over
+    limpers, the big blind checks the rest, and the small blind completes with
+    playable hands.
+21. **The steal copy claimed the blinds fold more often than the break-even
+    bar.** They fold to a button raise together around 40% of the time, not
+    67%. The copy now says so, and explains that position and equity when
+    called make up the difference.
+22. **Seven-card hand odds were wrong at the top.** Straight flush and quads
+    were listed at 1 in 30,000 and 1 in 4,000; over seven cards they are about
+    1 in 3,200 and 1 in 600.
+23. **Set-mining wanted only 10× behind.** The rule now asks for about 15×,
+    since a flopped set does not get paid every time.

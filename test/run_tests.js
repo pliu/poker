@@ -852,6 +852,59 @@ section("coach");
   ok("76s in the small blind facing a raise is a fold (no position)",
      /FOLD/.test(a76sb.headline), a76sb.headline + " pos=" + a76sb.position);
 
+  ok("set-mining wants about 15x behind, not the old 10x",
+     Coach.speculativeHand(H("2s 2h")).needMult >= 15, String(Coach.speculativeHand(H("2s 2h")).needMult));
+
+  // --- blinds facing limpers: "worth playing" is not "worth raising" ---
+  function limpTo(limperIds) {
+    return function (g) {
+      limperIds.forEach(function (id) {
+        g.players[id].bet = 20; g.players[id].committed = 20;
+        g.players[id].streetActions = [{ action: "call", label: "CALL 20", street: "preflop" }];
+      });
+      g.currentBet = 20;
+    };
+  }
+  (function blindsOverLimpers() {
+    // button 2: seat 3 small blind, hero (seat 0) big blind, seat 1 first to act
+    var weak = Coach.advise(spot({ hole: H("Qd 8c"), button: 2, setup: function (g) {
+      limpTo([1, 3])(g); g.players[2].folded = true; } }), 0, { iters: 300 });
+    ok("big blind checks a weak hand over a limp instead of raising it",
+       weak.action === "check", weak.headline);
+    ok("big blind copy does not claim to act last after the flop",
+       !/act after them on every later round/.test(weak.why.join(" ")));
+    var strong = Coach.advise(spot({ hole: H("Ah Jc"), button: 2, setup: function (g) {
+      limpTo([1, 3])(g); g.players[2].folded = true; } }), 0, { iters: 300 });
+    ok("big blind raises a strong hand over a limp", strong.action === "raise", strong.headline);
+    // button 3: hero (seat 0) small blind, seat 1 big blind, seat 2 limps
+    var sb = Coach.advise(spot({ hole: H("Jh 8h"), button: 3, setup: function (g) {
+      limpTo([2])(g); g.players[3].folded = true; } }), 0, { iters: 300 });
+    ok("small blind completes a playable hand over a limp rather than raising or folding",
+       sb.action === "call" && /complete/.test(sb.headline), sb.headline);
+    var sbJunk = Coach.advise(spot({ hole: H("8d 3c"), button: 3, setup: function (g) {
+      limpTo([2])(g); g.players[3].folded = true; } }), 0, { iters: 300 });
+    ok("small blind still folds junk over a limp", sbJunk.action === "fold", sbJunk.headline);
+  })();
+
+  (function stealCopyIsHonest() {
+    var g = spot({ hole: H("Qd 7c"), setup: function (x) { x.players[3].folded = true; } });
+    var a = Coach.advise(g, 0, { iters: 300 });
+    ok("Q7o on the button folded-to is a steal", a.isSteal, a.headline);
+    var text = a.why.join(" ");
+    ok("steal copy does not claim the blinds fold more often than the break-even bar",
+       !/throw away far more hands/.test(text) && /do not fold that often/.test(text), text);
+  })();
+
+  (function noThreeBetBluffIntoATightRaiser() {
+    var g = spot({ hole: H("As 5s"), setup: faceRaise() });
+    var loose = Coach.advise(g, 0, { iters: 400, rng: Poker.mulberry32(5) });
+    var tight = Coach.advise(g, 0, { iters: 400, rng: Poker.mulberry32(5),
+      stats: { C: { hands: 40, vpip: 0.12, pfr: 0.07, aggression: 0.5 } } });
+    ok("A5s 3-bet bluffs an unknown raiser", /3-BET.*bluff/.test(loose.headline), loose.headline);
+    ok("A5s does not 3-bet bluff a raiser observed to raise 7% of hands",
+       !/bluff/.test(tight.headline), tight.headline);
+  })();
+
   var g72r = spot({ hole: H("7d 2c"), setup: faceRaise() });
   var a72r = Coach.advise(g72r, 0, { iters: 400 });
   ok("72o facing a raise is still a fold", /FOLD/.test(a72r.headline), a72r.headline);
@@ -1187,6 +1240,45 @@ section("coach");
        return sm > 0 && sm < vsGus.a.trap.valueTo;
      })(),
      String(Coach.smallBetTarget(vsGus.g, 0, vsGus.a.trap.valueTo)));
+
+  (function modelsUseOnlyVisibleEvidence() {
+    var texDry0 = Poker.boardTexture(H("Kd 7c 2s"));
+    var pManiac = Coach.estimateInduceFrequency(vsGus.g, 1, texDry0, null, { lookWeak: true });
+    var pStation = Coach.estimateInduceFrequency(vsVicky.g, 1, texDry0, null, { lookWeak: true });
+    ok("with no observed hands the induce estimate ignores the bot's persona",
+       Math.abs(pManiac - pStation) < 1e-9, pManiac + " vs " + pStation);
+  })();
+
+  (function defaultsAreAnchoredOnEquilibrium() {
+    var g = trapSpot({ hole: H("9h 9c"), board: H("Ad 8h 3c 5s 2d"), stage: "river", button: 0,
+                       setup: headsUpLastToAct, iters: 200 }).g;
+    var tex = Poker.boardTexture(g.board);
+    [0.5, 0.75, 1.0].forEach(function (f) {
+      var b = Coach.estimateBluffFrequency(g, 1, f * 200, 200, tex, null, {});
+      var balanced = f / (1 + 2 * f);
+      ok("unknown river bettor at " + f + "x pot is assumed near balanced (" + Math.round(balanced * 100) + "%)",
+         Math.abs(b - balanced) <= 0.05, String(b));
+    });
+    var ranges = Coach.opponentRanges(g, 0, null);
+    var fe = Coach.foldEquity(g, 0, 133, 200, ranges, tex, null, false);
+    ok("unknown opponent folds to a 2/3-pot bet near the minimum-defence rate, not 25% more",
+       fe.all >= 1 - fe.mdf - 0.02 && fe.all <= 1 - fe.mdf + 0.12, "fold " + fe.all + " mdf " + fe.mdf);
+  })();
+
+  (function raisersAreStrongerThanBettors() {
+    var g = trapSpot({ hole: H("Ah Qc"), board: H("Ad 8h 3c"), stage: "flop", button: 0, iters: 1500, seed: 5,
+      setup: function (x) {
+        x.players.forEach(function (p) { p.bet = 0; p.hasActed = false; p.committed = 60; p.streetActions = []; });
+        x.players[2].folded = true; x.players[3].folded = true;
+        x.players[1].bet = 180; x.players[1].committed = 240;
+        x.players[1].lastAction = { action: "raise", label: "BET 180", street: "flop" };
+        x.players[1].streetActions = [x.players[1].lastAction];
+        x.currentBet = 180; x.lastAggressor = 1;
+      } });
+    var t = g.a.trap, v = g.a.vsBluff;
+    ok("top pair's equity against a re-raise is below its equity against the original bet",
+       t && v && t.eqVsRaise < v.eqVsPolarised - 0.03, t && v && (t.eqVsRaise + " vs " + v.eqVsPolarised));
+  })();
 
   var texDry = Poker.boardTexture(H("Kd 7c 2s"));
   var pGus = Coach.estimateInduceFrequency(vsGus.g, 1, texDry, gusStats, { lookWeak: true });

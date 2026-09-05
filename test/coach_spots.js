@@ -123,6 +123,6 @@ spot("Ace-high facing a big river bet from the nit",
     setup: function(g){ heroFacesBet(1, 300, 100)(g); } });
 spot("Top pair top kicker facing a flop bet",
   { hole: H("Ah Qc"), board: H("Ad 8h 3c"), stage:"flop", setup: heroFacesBet(1, 180, 60) });
-spot("Second pair facing a river overbet",
+spot("Second pair facing a two-thirds-pot river bet",
   { hole: H("9h 9c"), board: H("Ad 8h 3c 5s 2d"), stage:"river", setup: heroFacesBet(3, 500, 200) });
 "done";

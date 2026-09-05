@@ -323,10 +323,10 @@ function trapEV(g, heroId, ctx) {
   var eqInd = eq;
   var bluffPct = 0.28;
   var vs = ctx.vsBluff;
-  if (vs && toCall > 0) {
-    eqInd = vs.decisionEquity;
-    bluffPct = vs.bluffPct;
-  } else if (nOpp === 1 && theirBet > 0 && pInd > 0.02) {
+  // The hands that bet *again* after you look weak are a narrower slice than
+  // the hands that bet once, so measure against next-street slices rather than
+  // reusing the equity against the current bet.
+  if (nOpp === 1 && theirBet > 0 && pInd > 0.02) {
     var vId = (induceOpps[0] && induceOpps[0].id !== undefined) ? induceOpps[0].id : ranges[0].id;
     bluffPct = estimateBluffFrequency(g, vId, theirBet, Math.max(1, potForInduce), texture, stats,
                                       { nextStreet: when === "next street" });
@@ -337,6 +337,9 @@ function trapEV(g, heroId, ctx) {
                                    Math.round(iters * 0.4), rng, indSlices.bluffBottom);
     if (spInd) eqInd = bluffPct * spInd.bottomEq + (1 - bluffPct) * spInd.topEq;
     else eqInd = clamp(eq * 0.92, 0, 1);
+  } else if (vs && toCall > 0) {
+    eqInd = clamp(vs.decisionEquity * 0.92, 0, 1);
+    bluffPct = vs.bluffPct;
   } else {
     eqInd = clamp(eq * (nOpp > 1 ? 0.88 : 0.92), 0, 1);
     if (nOpp === 1 && liveOpp[0])
@@ -392,6 +395,7 @@ function trapEV(g, heroId, ctx) {
   /* ---- Small bet/raise: keep worse hands, still look weak enough to raise */
   var smallTo = ctx.smallTo !== undefined ? ctx.smallTo : smallBetTarget(g, heroId, valueTo);
   var evSmall = null, smallCost = 0, feSmall = 0, eqSmallCont = eq, pRaiseSmall = 0;
+  var eqVsRaise = eqInd;
   if (smallTo > 0) {
     smallCost = Math.max(0, smallTo - hero.bet);
     var feS = foldEquity(g, heroId, smallCost, pot, ranges, texture, stats, toCall > 0);
@@ -406,7 +410,9 @@ function trapEV(g, heroId, ctx) {
     });
     var noneR = 1;
     raiseEach.forEach(function (p) { noneR *= (1 - p); });
-    pRaiseSmall = Math.min(1 - noneR, pContS * 0.85);
+    // Of the hands that continue against a small bet, most call; only about a
+    // third raise. The old cap let 85% of continuing hands re-raise.
+    pRaiseSmall = Math.min(1 - noneR, pContS * 0.35);
     if (maxOppTo <= smallTo) pRaiseSmall = 0;
     var extra = roundChips(Math.max(g.bb * 2, (pot + smallTo) * 0.55), g.bb);
     var T = smallTo + extra;
@@ -418,7 +424,22 @@ function trapEV(g, heroId, ctx) {
     var evCallS = eqSmallCont * (pot + smallCost + smallCallerCost) - smallCost;
     var heroFinalCost = Math.max(0, T - hero.bet);
     var oppFinalCost = Math.max(0, T - lg.currentBet);
-    var evRaiseS = eqInd * (pot + heroFinalCost + oppFinalCost) - heroFinalCost;
+    // Whoever raises a small bet has a stronger range than whoever merely
+    // bets: the strongest slice of their hands plus a thinner set of bluffs.
+    var raiseBluff = clamp(bluffPct * 0.7, 0.05, 0.40);
+    if (nOpp === 1 && pRaiseSmall > 0) {
+      // Never wider than half the slice that merely bets on this street.
+      var betSlices = bettingSlices(g.stage, bluffPct, 1.0);
+      var raiseTop = clamp(Math.min(pRaiseSmall * (1 - raiseBluff), betSlices.valueTop * 0.5), 0.04, 0.20);
+      var raiseBottom = clamp(raiseTop * raiseBluff / (1 - raiseBluff), 0.025, 0.30);
+      var spR = P.splitRangeEquity(hero.hole, g.board, ranges[0], raiseTop,
+                                   Math.round(iters * 0.35), rng, raiseBottom);
+      eqVsRaise = spR ? raiseBluff * spR.bottomEq + (1 - raiseBluff) * spR.topEq
+                      : clamp(eqInd * 0.85, 0, 1);
+    } else {
+      eqVsRaise = clamp(eqInd * 0.85, 0, 1);
+    }
+    var evRaiseS = eqVsRaise * (pot + heroFinalCost + oppFinalCost) - heroFinalCost;
     evSmall = pFoldS * pot + pCallS * evCallS + pRaiseSmall * evRaiseS;
     if (!isFinite(evSmall)) evSmall = null;
   }
@@ -486,7 +507,7 @@ function trapEV(g, heroId, ctx) {
       " — about a third of the pot. That looks like a stab, not a monster: they fold only " +
       pct(feSmall) + " of the time, so worse hands stay, and they raise it " +
       oddsPhrase(pRaiseSmall) + ". Against the hands that just call you win " + pct(eqSmallCont) +
-      "; against a raise you still win " + pct(eqInd) + ".";
+      "; against the stronger hands that raise it you win " + pct(eqVsRaise) + ".";
   } else if (when === "this street") {
     text = "If you check, " + who + " still has to act. A check looks like weakness, so they bet " +
       oddsPhrase(pInd) + " — about " + theirBet + " into " + pot + ". Your win rate against the hands " +
@@ -538,6 +559,7 @@ function trapEV(g, heroId, ctx) {
     bluffPct: bluffPct,
     eqWhenCalled: eqWhenCalled,
     eqInduced: eqInd,
+    eqVsRaise: eqVsRaise,
     eqSmallCont: eqSmallCont,
     evBet: evBet,
     evSmall: evSmall,
@@ -584,19 +606,19 @@ function speculativeHand(hole) {
   var gap = hi - lo - 1;
   if (hi === lo && hi <= 7) {
     return {
-      kind: "set", hit: 0.12, needMult: 10, needPos: false, label: "set mine",
+      kind: "set", hit: 0.12, needMult: 15, needPos: false, label: "set mine",
       hitWord: "a set about 1 time in 8"
     };
   }
   if (suited && hi === 14 && lo <= 5 && lo >= 2) {
     return {
-      kind: "suited-ace", hit: 0.06, needMult: 12, needPos: true, label: "speculative",
+      kind: "suited-ace", hit: 0.06, needMult: 18, needPos: true, label: "speculative",
       hitWord: "the nut flush, and sometimes a straight"
     };
   }
   if (suited && hi !== lo && lo >= 4 && hi <= 12 && gap <= 1) {
     return {
-      kind: "suited", hit: gap === 0 ? 0.05 : 0.035, needMult: gap === 0 ? 12 : 15,
+      kind: "suited", hit: gap === 0 ? 0.05 : 0.035, needMult: gap === 0 ? 18 : 22,
       needPos: true, label: "speculative",
       hitWord: gap === 0
         ? "a straight or a flush (or a strong draw to one)"
@@ -613,8 +635,9 @@ function speculativePosOK(g, heroId, spec) {
 }
 
 /* Can we win enough *after* we hit to pay for all the times we miss?
-   `needed` is "chips behind / call" — the usual 10:1 for a set, a bit more
-   for suited connectors that hit less often. Stations pay; nits don't. */
+   `needed` is "chips behind / call" — about 15:1 for a set (the old 10:1 rule
+   assumes you get paid every time you hit, and you do not), a bit more for
+   suited connectors that hit less often. Stations pay; nits don't. */
 function impliedOddsOK(g, heroId, lg, spec, opts) {
   opts = opts || {};
   var hero = g.players[heroId];
@@ -719,19 +742,48 @@ function advisePreflop(g, heroId, opts) {
   if (!facingRaise) {
     // Unopened (or limped) pot
     var stealSpot = (pos === "Button" || pos === "Cutoff" || pos === "Small Blind" || pos === "Button (SB)") && limpers === 0;
+    var inBlindVsLimp = limpers > 0 && (pos === "Big Blind" || pos === "Big Blind (BB)" || pos === "Small Blind");
+    var isoThreshold = pos === "Small Blind" ? 0.20 : 0.24;
     if (premium) {
       action = "raise"; raiseTo = betTarget(g, heroId, limpers ? 1.0 : 0.75); cls = "raise";
       headline = "RAISE to " + raiseTo;
       plain = "Raise. This is one of the best hands you can be dealt — get money in while you're ahead.";
       why.push(handPhrase(code, hp) + ". You are a long way ahead of anything the others are likely holding, so the goal is simple: get chips into the pot while that is true.");
       why.push("Raising also thins the field. Every player you knock out now is one fewer chance for someone to get lucky on you later.");
+    } else if (inBlindVsLimp) {
+      // Somebody limped and you are in a blind. "Worth playing" is not "worth
+      // raising": the big blind sees the flop for free, the small blind for
+      // half price, and both act first after the flop. Raise only the hands
+      // that can stand being called.
+      var limpWord = limpers === 1 ? "One player has just called the big blind" : limpers + " players have just called the big blind";
+      if (hp <= isoThreshold && lg.canRaise) {
+        action = "raise"; raiseTo = betTarget(g, heroId, 0.9); cls = "raise";
+        headline = "RAISE to " + raiseTo;
+        plain = "Raise. Someone limped in with a weak hand; make them pay to see the flop with yours.";
+        why.push(handPhrase(code, hp) + ". " + limpWord + ", which usually means a middling hand. From the " + pos.toLowerCase() + " you want roughly your best " + pct(isoThreshold) + " of hands to raise over a limp, and this one qualifies.");
+        why.push("Raise big — about " + raiseTo + ". A limper who calls has to play the flop against a hand that is usually better, and one who folds hands you the pot. Either is fine. Remember you act first after the flop, so keep this to hands that can take a call.");
+      } else if (lg.canCheck) {
+        action = "check"; cls = "check"; headline = "CHECK";
+        plain = "Check. Nobody raised, so you see the flop for free — but this hand is not strong enough to raise over a limp.";
+        why.push(handPhrase(code, hp) + ". " + limpWord + ". Raising with a hand this weak just builds a pot you will have to play first-to-act on every later round.");
+        why.push("A free flop is a free flop. Take it, and only put money in afterwards if the board actually helps you.");
+      } else if (hp <= 0.50) {
+        action = "call"; cls = "call"; headline = "CALL " + lg.toCall + "  (complete)";
+        plain = "Just complete. Half a blind to see a flop with a hand that can hit something is a fine price.";
+        why.push(handPhrase(code, hp) + ". " + limpWord + ", so this is " + lg.toCall + " to play for " + (decisionPot + lg.toCall) + " — you need only " + pct1(potOdds) + " to break even.");
+        why.push("It is not a hand to raise with: you will be first to act after the flop. Complete, and then play only when the flop is good to you. If the big blind raises, let it go.");
+      } else {
+        action = "fold"; cls = "fold"; headline = "FOLD";
+        plain = "Fold. Even at half price this hand does not make enough good flops to be worth playing out of position.";
+        why.push(handPhrase(code, hp) + ". You would be first to act on every later round against " + (limpers + 1) + " players, with a hand that rarely makes anything you can bet with confidence.");
+      }
     } else if (playable) {
       action = "raise"; raiseTo = betTarget(g, heroId, limpers ? 0.9 : 0.7); cls = "raise";
       headline = "RAISE to " + raiseTo;
       plain = "Raise. This hand is good enough to play, and raising beats just calling.";
       why.push(handPhrase(code, hp) + ". From " + pos + " it is worth playing about the best " + pct(openThreshold) + " of hands, and this one makes the cut.");
       why.push("Raise rather than just call. Two reasons: sometimes everyone folds and you win right now, and when they don't, you are the one who looks strong for the rest of the hand.");
-      if (behind <= 1) why.push("Only " + behind + " player" + (behind === 1 ? "" : "s") + " still to act behind you, and you will get to act after them on every later round. Acting last is a real edge — you see what they do before you commit.");
+      if (behind <= 1 && g.isLatePosition(heroId)) why.push("Only " + behind + " player" + (behind === 1 ? "" : "s") + " still to act behind you, and you will get to act after them on every later round. Acting last is a real edge — you see what they do before you commit.");
     } else if (stealSpot && hp <= openThreshold * 1.45) {
       action = "raise"; raiseTo = betTarget(g, heroId, 0.7); cls = "bluff"; isSteal = true; isBluff = true;
       headline = "RAISE to " + raiseTo + "  (steal)";
@@ -740,8 +792,14 @@ function advisePreflop(g, heroId, opts) {
       // What you risk is what you *add*, not the raise-to total: from the small
       // blind the chips you already posted are in the pot and are not at stake again.
       var stealCost = raiseTo - hero.bet;
-      why.push("The arithmetic: you put in " + stealCost + (hero.bet ? " more" : "") + " to win the " + decisionPot + " sitting there. That only has to work " +
-        oddsPhrase(stealCost / (stealCost + decisionPot)) + " to be worth doing — and players in the blinds throw away far more hands than that.");
+      why.push("The arithmetic: you put in " + stealCost + (hero.bet ? " more" : "") + " to win the " + decisionPot + " sitting there. If they folded " +
+        oddsPhrase(stealCost / (stealCost + decisionPot)) + " the raise would pay on its own — and they do not fold that often. " +
+        (behind === 1 ? "The one player left gives up to a raise roughly half the time."
+          : behind === 2 ? "Both blinds give up to a raise together somewhere around 4 times in 10."
+          : "Everyone left gives up together well under half the time.") +
+        " What makes up the difference is everything that happens when they call: you act " +
+        (g.isLatePosition(heroId) ? "after them on every later round, they miss the flop about two times in three, and this hand still wins its share of showdowns."
+                                  : "first afterwards, so the raise only works with a hand that can still catch a piece of the flop — which this one can."));
       why.push("If you never do this, the players to your left get free money every time it folds to you.");
     } else if (lg.canCheck) {
       action = "check"; cls = "check"; headline = "CHECK";
@@ -766,6 +824,9 @@ function advisePreflop(g, heroId, opts) {
       valueCandidate = hp <= P.codePct("KK");
     }
     var raiserId = g.preflopRaiser;
+    var raiserStats = (opts && opts.stats && raiserId !== null && g.players[raiserId])
+      ? opts.stats[g.players[raiserId].name] : null;
+    var raiserTight = !!(raiserStats && raiserStats.hands >= 12 && raiserStats.pfr < 0.10);
     // Against the whole field that has already paid the price, not just the
     // raiser — every extra caller takes a bite out of this number.
     var facingEq = eq;
@@ -802,7 +863,7 @@ function advisePreflop(g, heroId, opts) {
         (Math.round(implied.ratio * 10) / 10) + " times the call, and you want about " + Math.round(implied.needed) + " times. That is the whole plan: miss cheap, get paid expensive.");
       why.push("If they go all-in and there is nothing left behind, this plan is dead. Fold. There is no payoff left.");
       if (facingThreeBet) why.push("This is already a re-raise pot, so the price is steep. You only continue because the stacks are still deep enough that a set gets paid.");
-    } else if (bluff3betCandidate && !facingThreeBet && g.isLatePosition(heroId) && hp <= 0.28 && hp > 0.09) {
+    } else if (bluff3betCandidate && !facingThreeBet && !raiserTight && g.isLatePosition(heroId) && hp <= 0.28 && hp > 0.09) {
       action = "raise"; raiseTo = betTarget(g, heroId, 1.0); cls = "bluff"; isBluff = true;
       headline = "3-BET to " + raiseTo + "  (bluff)";
       plain = "Re-raise as a bluff. Not because you're ahead — because it works.";
@@ -844,6 +905,9 @@ function advisePreflop(g, heroId, opts) {
         why.push("This is the kind of hand that can smash a flop they will not expect, but you will have to act first after the flop. That makes the disguised-hit plan too expensive — they bet, you guess. Fold and wait for a cheaper seat.");
       } else {
         why.push("A raise is information. Until you have a specific reason to think a player is raising light, believe them and save your chips for a better spot.");
+        if (raiserTight && bluff3betCandidate && g.isLatePosition(heroId))
+          why.push("This would normally be a hand to re-raise as a bluff, but " + g.players[raiserId].name + " has raised only " +
+            Math.round(raiserStats.pfr * 100) + "% of hands over " + raiserStats.hands + " hands. A player that tight does not fold to a re-raise often enough for the bluff to pay.");
       }
       noteEquityLooksTempting();
     }
@@ -1170,8 +1234,13 @@ function advisePostflop(g, heroId, opts) {
       action = "check"; cls = "check"; headline = "CHECK";
       why.push("You'd win " + oddsPhrase(eq) + " if this went to the end — not enough to bet and expect worse hands to pay you.");
       if (!bluff.profitable) {
-        plain = "Check. Not strong enough to bet, and a bluff wouldn't work either.";
-        why.push("And bluffing does not work here. " + bluff.text);
+        var bluffGetsThrough = bluff.foldEquity >= bluff.breakEven;
+        plain = bluffGetsThrough
+          ? "Check. A bluff would get through often enough — but this hand wins some showdowns on its own, and that is worth more."
+          : "Check. Not strong enough to bet, and a bluff wouldn't work either.";
+        why.push((bluffGetsThrough
+          ? "A bluff is not crazy, but it is the wrong hand to bluff with: checking keeps the " + oddsPhrase(eq) + " you win at showdown, and a bet throws that away to win a pot you were sometimes winning anyway. "
+          : "And bluffing does not work here. ") + bluff.text);
         if (nOpp > 1) why.push("Remember a bluff has to get past everyone. Each extra player makes it much less likely that they all fold.");
       } else if (nOpp > 1) {
         // the maths is positive, but it is thin and it has to survive several players
@@ -1224,6 +1293,8 @@ function advisePostflop(g, heroId, opts) {
       plain = "Call. You win often enough to justify the price.";
       why.push("It costs " + toCall + " to stay in a pot that would then be worth " + (pot + toCall) +
         ". So you need to win " + pct1(potOdds) + " of the time to break even — and you win " + oddsPhrase(decisionEq) + ". That makes calling profitable.");
+      if (vsBluff && decisionEq - potOdds < 0.04)
+        why.push("Only just, though. The margin here is about " + pct1(decisionEq - potOdds) + ", which is smaller than the guesswork in how often this player bluffs. Against someone you have seen bluff, call; against someone who has only ever bet with the goods, folding is fine too.");
       if (vsBluff && decisionEq < 0.55) {
         why.push("Be honest about what this call is: you are not calling because your hand is strong, you are calling because theirs often isn't. " + vsBluff.text);
         if (vsBluff.mdfYouOwe !== null)
@@ -1235,6 +1306,8 @@ function advisePostflop(g, heroId, opts) {
       plain = "Fold. The price is higher than this hand is worth.";
       why.push("It costs " + toCall + " to stay in, which means you would need to win " + pct1(potOdds) + " of the time to break even. You only win " + oddsPhrase(decisionEq) + ". Over time, calling here loses money.");
       if (vsBluff) why.push("And that already gives them credit for bluffing " + pct(vsBluff.bluffPct) + " of the time. Even then you only get to " + pct(decisionEq) + ". " + (a.outs ? "Your " + a.outs + " outs are not enough at this price." : "You have nothing to improve to."));
+      if (vsBluff && potOdds - decisionEq < 0.04)
+        why.push("It is close: " + pct(decisionEq) + " against " + pct1(potOdds) + " needed is within a couple of points of break-even, which is inside the guesswork about how often this player bluffs. If you have actually seen them bluff at this size, calling is fine.");
       if (bluff.profitable && lg.canRaise)
         why.push("There is a bolder option: raise as a bluff. " + bluff.text + " Folding is the calm, low-risk choice — but this is a spot where a raise would also make money if you have the stomach for it.");
     }

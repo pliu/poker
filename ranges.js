@@ -102,20 +102,23 @@ function estimateBluffFrequency(g, playerId, betSize, potBefore, texture, stats,
   opts = opts || {};
   var player = g.players[playerId];
   var st = (stats && stats[player.name]) || null;
-  var base = 0.28;
-  if (st && st.hands >= 12) base = clamp(0.12 + st.aggression * 0.22, 0.10, 0.55);
+  // Start from the bluff share that makes a caller indifferent at this size —
+  // b / (p + 2b) — so that with no history a bettor is assumed balanced, not
+  // over-bluffing. Observed aggression, texture and street move it from there.
   var sizeFrac = betSize / Math.max(1, potBefore);
-  base += clamp((sizeFrac - 0.6) * 0.22, -0.10, 0.16);
-  base += (texture.wet - 0.35) * 0.20;
+  var base = sizeFrac / (1 + 2 * sizeFrac);
+  if (st && st.hands >= 12) base += clamp((st.aggression - 0.5) * 0.30, -0.12, 0.15);
+  base += (texture.wet - 0.35) * 0.15;
   var street = g.stage;
   if (opts.nextStreet) {
     if (street === "flop") street = "turn";
     else if (street === "turn") street = "river";
   }
-  if (street === "river") base += 0.04;
+  if (street === "flop") base += 0.05;        // draws bet as semi-bluffs
+  else if (street === "turn") base += 0.02;
   if (street === "preflop") base -= 0.08;
-  if (g.live().length > 2) base -= 0.10;
-  return clamp(base, 0.05, 0.65);
+  if (g.live().length > 2) base -= 0.08;
+  return clamp(base, 0.04, 0.60);
 }
 
 function bettingSlices(stage, bluffPct, sizeFrac) {
