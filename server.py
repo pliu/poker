@@ -14,6 +14,7 @@ Everything is Python standard library, and the socket is bound to loopback only
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,9 @@ CODEX_MODEL = os.environ.get("POKER_COACH_CODEX_MODEL") or None
 TIMEOUT_S = int(os.environ.get("POKER_COACH_TIMEOUT", "120"))
 
 DEFAULT_ENGINE = "claude"
+# Session ids are passed to the CLI as an argument; keep them to the shape the
+# CLIs actually emit so a crafted value can never be read as a flag.
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 ENGINES = {
     "claude": {"label": "Claude", "bin": CLAUDE_BIN, "model": MODEL},
     "codex": {"label": "Codex", "bin": CODEX_BIN, "model": CODEX_MODEL},
@@ -135,10 +139,29 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     # ----------------------------------------------------------------- POST
+    def _same_origin(self):
+        """Only the app's own page may spawn a subprocess. The socket is bound
+        to loopback, but any web page the user visits can still POST to a
+        loopback port; browsers always attach Origin to such cross-site POSTs,
+        so a missing or non-local Origin is rejected."""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True                      # curl, scripts: no browser involved
+        try:
+            u = urllib.parse.urlparse(origin)
+        except Exception:
+            return False
+        host = self.headers.get("Host") or ""
+        return u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost") \
+            and u.netloc == host
+
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
         if path != "/api/ask":
             self._json(404, {"error": "no such endpoint"})
+            return
+        if not self._same_origin():
+            self._json(403, {"error": "cross-origin requests are not allowed"})
             return
         try:
             length = int(self.headers.get("Content-Length") or 0)
@@ -150,6 +173,9 @@ class Handler(SimpleHTTPRequestHandler):
         question = (body.get("question") or "").strip()
         transcript = body.get("transcript") or ""
         session_id = body.get("sessionId") or None
+        if session_id is not None and not SESSION_ID_RE.match(str(session_id)):
+            self._json(400, {"error": "malformed sessionId"})
+            return
         engine = (body.get("engine") or DEFAULT_ENGINE).strip().lower()
         if not question:
             self._json(400, {"error": "empty question"})

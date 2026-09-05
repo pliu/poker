@@ -54,22 +54,23 @@ function heroChecksTo(nOpp) {
 }
 
 console.log("############ PREFLOP ############");
-spot("AA under the gun", { hole: H("As Ah"), button: 0 });
-spot("72o under the gun", { hole: H("7d 2c"), button: 0 });
-spot("KJo on the button, folded to you", { hole: H("Kd Jc"), button: 3,
+spot("AA first to act (4-handed, the cutoff is under the gun)", { hole: H("As Ah"), button: 1 });
+spot("72o first to act (4-handed, the cutoff is under the gun)", { hole: H("7d 2c"), button: 1 });
+spot("KJo on the button, folded to you", { hole: H("Kd Jc"), button: 0,
   setup: function(g){ g.players[3].folded=true; g.actionOn=0; } });
-spot("J4s on the button, folded to you (steal?)", { hole: H("Js 4s"), button: 3,
+spot("J4s on the button, folded to you (steal?)", { hole: H("Js 4s"), button: 0,
   setup: function(g){ g.players[3].folded=true; } });
-spot("A5s in the cutoff facing a raise (3-bet bluff candidate)", { hole: H("As 5s"), button: 2,
+spot("A5s on the button facing a raise (3-bet bluff candidate)", { hole: H("As 5s"), button: 0,
   setup: function(g){
     g.players[3].bet=60; g.players[3].committed=60; g.currentBet=60; g.preflopRaiser=3;
     g.players[3].streetActions=[{action:"raise",label:"RAISE TO 60",street:"preflop"}];
   }});
-spot("Q9o in the big blind facing a min-raise (price)", { hole: H("Qd 9c"), button: 1,
+spot("Q9o in the big blind facing a min-raise (price)", { hole: H("Qd 9c"), button: 2,
   setup: function(g){
-    g.players[0].bet=20; g.players[0].committed=20;
-    g.players[3].bet=40; g.players[3].committed=40; g.currentBet=40; g.preflopRaiser=3;
-    g.players[3].streetActions=[{action:"raise",label:"RAISE TO 40",street:"preflop"}];
+    // button 2: seat 3 is the small blind, hero (seat 0) the big blind, seat 1 under the gun
+    g.players[1].bet=40; g.players[1].committed=40; g.currentBet=40; g.preflopRaiser=1;
+    g.players[1].streetActions=[{action:"raise",label:"RAISE TO 40",street:"preflop"}];
+    g.players[2].folded=true; g.players[3].folded=true;
   }});
 spot("22 on the button facing a raise (set mine?)", { hole: H("2s 2h"), button: 0,
   setup: function(g){

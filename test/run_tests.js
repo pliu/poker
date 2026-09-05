@@ -148,6 +148,22 @@ section("draw detection");
   var g = Poker.analyseHand(H("Ah 7d"), H("As 5d 2c"));
   ok("top pair flagged", g.topPair);
   ok("no phantom draws on the river", Poker.analyseHand(H("Ah Kd"), H("7s 5d 2c 9h Jc")).outs === 0);
+  var h = Poker.analyseHand(H("Ah Kd"), H("5c 6d 7h 8s"));
+  eq("a straight that would be on the board is not our draw", h.straightDraw, 0);
+  eq("only the overcards count as outs", h.outs, 6);
+  ok("and the draw text does not claim a straight draw", h.drawText.indexOf("open-ended straight draw") < 0);
+  var h2 = Poker.analyseHand(H("9h Td"), H("5c 6d 7h 8s"));
+  eq("a hand that already has the straight has no straight draw", h2.straightDraw, 0);
+  var h3 = Poker.analyseHand(H("Th 3d"), H("5c 6d 7h 8s"));
+  eq("one card above the board straight is still a real out", h3.straightDraw, 1);
+  var i = Poker.analyseHand(H("Kh Qh"), H("Ah 7h 2c"));
+  ok("K-high flush draw is the nut draw when the ace of that suit is on board", i.flushDraw && i.nutFlushDraw);
+  var i2 = Poker.analyseHand(H("Kh Qh"), H("Jh 7h 2c"));
+  ok("K-high flush draw is not the nut draw when the ace is unseen", i2.flushDraw && !i2.nutFlushDraw);
+  var j = Poker.analyseHand(H("Ah Kh"), H("Qh Jh 2c"));
+  eq("nut flush draw + gutshot: 9 + 4 - 1 shared card = 12 outs", j.outs, 12);
+  var k = Poker.analyseHand(H("9h 8h"), H("7h 6h 2c"));
+  eq("flush draw + open-ender: 9 + 8 - 2 shared cards = 15 outs", k.outs, 15);
 })();
 
 section("board texture");
@@ -157,6 +173,11 @@ section("board texture");
   ok("wet board scores higher than dry", wet.wet > dry.wet, wet.wet + " vs " + dry.wet);
   ok("monotone detected", Poker.boardTexture(H("Kh 8h 3h")).monotone);
   ok("paired detected", Poker.boardTexture(H("Kh Kd 3s")).paired);
+  ok("K95 rainbow: no straight is possible", !Poker.boardTexture(H("Kd 9c 5h")).straightPossible);
+  ok("A23: the wheel is possible", Poker.boardTexture(H("Ad 2c 3h")).straightPossible);
+  ok("QJT: straight possible", Poker.boardTexture(H("Qd Jc Th")).straightPossible);
+  ok("K95 is not wetter than K72 by much", Poker.boardTexture(H("Kd 9c 5h")).wet <= Poker.boardTexture(H("Ks 7d 2c")).wet + 0.1001);
+  ok("K95 turn 8 opens a straight", Poker.boardTexture(H("Kd 9c 5h 8s")).straightPossible);
 })();
 
 /* ------------------------------------------------------------------ */
@@ -426,6 +447,52 @@ function mkGame(stacks, button, seed) {
 })();
 
 /* ------------------------------------------------------------------ */
+(function shortAllInBetAfterCheckDoesNotReopen() {
+  // Flop: P1 checks, P2 shoves 5 chips (below the 20 minimum bet), P0 calls.
+  // P1 has already acted and faces less than a full bet: call or fold only.
+  var g = mkGame([2000, 2000, 2000, 2000], 0, 3).startHand();
+  g.act(3, "fold"); g.act(0, "call"); g.act(1, "call"); g.act(2, "check");
+  g.players[2].chips = 5;
+  g.act(1, "check");
+  g.act(2, "raise", 5);
+  ok("a player who has not acted may raise over a short all-in bet", g.legal(0).canRaise);
+  eq("min raise over a 5-chip all-in is a full bet on top", g.legal(0).minRaiseTo, 25);
+  g.act(0, "call");
+  eq("action returns to the player who checked", g.actionOn, 1);
+  ok("the player who checked CANNOT raise a sub-minimum all-in", !g.legal(1).canRaise);
+  eq("but still owes the 5", g.legal(1).toCall, 5);
+})();
+
+(function cumulativeShortAllIns() {
+  // P0 bets 100. Two short all-ins (+30 then +40) total 70, less than a full
+  // raise of 100, so P0 may only call. With +30 then +80 (110 total) P0 may re-raise.
+  function play(secondStack) {
+    var g = mkGame([2000, 150, secondStack, 2000], 3, 5).startHand();
+    g.act(2, "call"); g.act(3, "call"); g.act(0, "call"); g.act(1, "check");
+    g.act(0, "raise", 100);
+    g.act(1, "raise", 130);
+    g.act(2, "raise", g.players[2].bet + g.players[2].chips);
+    g.act(3, "fold");
+    return g;
+  }
+  var a = play(170);
+  eq("action is back on the original bettor", a.actionOn, 0);
+  ok("two short all-ins totalling less than a full raise do not reopen", !a.legal(0).canRaise);
+  var b = play(230);          // 210 on the flop: +80 on top of +30 = 110 >= 100
+  ok("short all-ins that together make a full raise DO reopen", b.legal(0).canRaise);
+})();
+
+(function emptyRangeBandIsNotAnyTwoCards() {
+  // Hero holds AA on an A-A board: an "AA only" band has no combos left.
+  var res = Poker.equity(H("As Ah"), H("Ad Ac 7s"), [{ lo: 0, hi: 0.0046 }], 500, Poker.mulberry32(1));
+  eq("no deals are sampled from an emptied band", res.iters, 0);
+  var pool = Poker.newDeck().filter(function (c) { return c.r !== 14; });
+  ok("sampleFromRange returns null for an emptied band",
+     Poker.sampleFromRange(pool, { lo: 0, hi: 0.0046 }, Poker.mulberry32(1)) === null);
+  var wide = Poker.equity(H("As Ah"), H("Ad Ac 7s"), [1], 500, Poker.mulberry32(1));
+  ok("an unrestricted range still samples", wide.iters === 500);
+})();
+
 section("random full-game fuzz (bots only)");
 (function fuzz() {
   var chipErrors = 0, crashes = 0, stuck = 0, hands = 0, showdowns = 0, allIns = 0;
@@ -826,7 +893,9 @@ section("coach");
   ok("bluff EV is a number", isFinite(a6.bluff.ev));
 
   (function semiBluffUsesTotalEV() {
-    var g = spot({ hole: H("9h 8h"), board: H("7s 6d 2c"), stage: "flop",
+    // 7-6-4 is a genuinely connected board (a straight is live), so the
+    // continuing range is sticky and folds fall below the pure-bluff bar.
+    var g = spot({ hole: H("9h 8h"), board: H("7s 6d 4c"), stage: "flop",
       setup: function (x) {
         x.players.forEach(function (p) { p.bet = 0; p.committed = 60; p.hasActed = false; p.streetActions = []; });
         x.players[1].bet = 90; x.players[1].committed = 150;

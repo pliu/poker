@@ -223,9 +223,11 @@ function bandCombos(pool, spec, memo) {
       if (p > b.lo && p <= b.hi) list.push(i * 64 + j);
     }
   }
-  var out = list.length ? list : null;
-  if (memo) memo[key] = out;
-  return out;
+  // An empty list is returned as an empty list, not as null: null means "no
+  // filter", and a band that hero's cards and the board have emptied must not
+  // silently turn into "any two cards".
+  if (memo) memo[key] = list;
+  return list;
 }
 function livePool(hole, board) {
   var dead = {};
@@ -262,7 +264,8 @@ function allPackedCombos(pool) {
 
 function makeRangeSampler(pool, board, spec, memo) {
   if (!spec || !spec.isBoardModel) return { plain: bandCombos(pool, spec, memo) };
-  var combos = bandCombos(pool, spec.base, memo) || allPackedCombos(pool);
+  var combos = bandCombos(pool, spec.base, memo);
+  if (combos === null) combos = allPackedCombos(pool);
   var scored = combos.map(function (packed) {
     var a = packed >> 6, b = packed & 63;
     return { packed: packed, score: evaluate([pool[a], pool[b]].concat(board)) };
@@ -405,11 +408,12 @@ function equity(hole, board, oppRanges, iters, rng) {
 function sampleFromRange(pool, band, rng, combos) {
   rng = rng || defaultRng;
   if (combos === undefined) combos = bandCombos(pool, band);
-  if (!combos) {
+  if (combos === null) {
     var a = (rng() * pool.length) | 0, b = (rng() * pool.length) | 0;
     if (a === b) b = (b + 1) % pool.length;
     return [pool[a], pool[b]];
   }
+  if (!combos.length) return null;
   var packed = combos[(rng() * combos.length) | 0];
   return [pool[packed >> 6], pool[packed & 63]];
 }
@@ -500,22 +504,29 @@ function analyseHand(hole, board) {
       out.flushDraw = true;
       var mineHi = 0;
       for (i = 0; i < hole.length; i++) if (hole[i].s === s) mineHi = Math.max(mineHi, hole[i].r);
-      var boardHi = 0;
-      for (i = 0; i < board.length; i++) if (board[i].s === s) boardHi = Math.max(boardHi, board[i].r);
-      out.nutFlushDraw = mineHi === 14;
+      // The draw is to the nuts when every higher card of the suit is already
+      // visible: K-high is the nut draw once the ace of that suit is on board.
+      var seenSuit = {};
+      for (i = 0; i < all.length; i++) if (all[i].s === s) seenSuit[all[i].r] = true;
+      var nut = true;
+      for (var v = mineHi + 1; v <= 14; v++) if (!seenSuit[v]) nut = false;
+      out.nutFlushDraw = nut;
     }
     if (suitCount[s] === 3 && holeSuit[s] >= 1 && board.length === 3) out.backdoorFlush = true;
   }
 
-  // straight draws: how many single cards complete a straight?
+  // straight draws: how many single ranks complete a straight for *us*? A card
+  // that only puts a straight on the board is not an out — everyone has it.
+  var completing = 0;
   if (board.length < 5 && made[0] < 4) {
-    var have = {}, k;
+    var have = {};
     for (i = 0; i < all.length; i++) have[all[i].r] = true;
-    var completing = 0;
+    var boardRanksOnly = board.map(function (x) { return x.r; });
     for (var r = 2; r <= 14; r++) {
       if (have[r]) continue;
       var test = Object.keys(have).map(Number).concat([r]);
-      if (straightHigh(test)) completing++;
+      var mine = straightHigh(test);
+      if (mine && mine > straightHigh(boardRanksOnly.concat([r]))) completing++;
     }
     if (completing >= 2) out.straightDraw = 2;
     else if (completing === 1) out.straightDraw = 1;
@@ -536,9 +547,9 @@ function analyseHand(hole, board) {
   // outs estimate
   var outs = 0;
   if (out.flushDraw) outs += 9;
-  if (out.straightDraw === 2) outs += out.straightOuts >= 8 ? 8 : out.straightOuts;
-  else if (out.straightDraw === 1) outs += 4;
-  if (out.flushDraw && out.straightDraw) outs -= 2; // overlap
+  if (out.straightDraw) outs += out.straightOuts;
+  // each straight-completing rank has exactly one card already counted as a flush out
+  if (out.flushDraw && out.straightDraw) outs -= completing;
   if (made[0] === 0 && out.overcards && !out.flushDraw && !out.straightDraw && board.length < 5)
     outs += out.overcards * 3;
   out.outs = Math.max(0, outs);
@@ -567,12 +578,21 @@ function boardTexture(board) {
   for (var a = 0; a < ranks.length; a++)
     for (var b = a + 1; b < ranks.length; b++)
       if (Math.abs(ranks[a] - ranks[b]) <= 4 && ranks[a] !== ranks[b]) connected++;
+  // A straight needs three board cards inside one five-rank window (ace plays
+  // low too). K-9-5 has two "connected" pairs but no such window.
+  var distinct = [], seenRank = {};
+  ranks.forEach(function (r) { if (!seenRank[r]) { seenRank[r] = 1; distinct.push(r); } });
+  if (seenRank[14]) distinct.push(1);
+  distinct.sort(function (x, y) { return y - x; });
+  var straightPossible = false;
+  for (var i3 = 0; i3 + 2 < distinct.length; i3++)
+    if (distinct[i3] - distinct[i3 + 2] <= 4) straightPossible = true;
 
   var wet = 0;
   if (maxSuit >= 3) wet += 0.35;
   else if (maxSuit === 2) wet += 0.12;
-  if (connected >= 2) wet += 0.25;
-  else if (connected === 1) wet += 0.1;
+  if (straightPossible) wet += 0.25;
+  else if (connected >= 1) wet += 0.1;
   if (span <= 4 && board.length >= 3) wet += 0.2;
   if (ranks[0] <= 9) wet += 0.05;      // low boards connect more ranges
   if (paired) wet -= 0.1;
@@ -584,7 +604,7 @@ function boardTexture(board) {
     paired: paired,
     monotone: maxSuit >= 3 && board.length >= 3,
     flushPossible: maxSuit >= 3,
-    straightPossible: connected >= 2,
+    straightPossible: straightPossible,
     highCard: ranks[0]
   };
 }
@@ -604,7 +624,7 @@ function Game(opts) {
       id: i, name: p.name, isHuman: !!p.isHuman, persona: p.persona || null,
       chips: p.chips === undefined ? (opts.startStack || 2000) : p.chips,
       hole: [], folded: true, allIn: false, bet: 0, committed: 0,
-      sittingOut: false, hasActed: false, raiseLocked: false,
+      sittingOut: false, hasActed: false, raiseLocked: false, actedAtBet: null,
       lastAction: null, streetActions: []
     };
   });
@@ -717,7 +737,7 @@ Game.prototype.startHand = function () {
   this.players.forEach(function (p) {
     p.sittingOut = p.chips <= 0;
     p.hole = []; p.folded = p.sittingOut; p.allIn = false;
-    p.bet = 0; p.committed = 0; p.hasActed = false; p.raiseLocked = false;
+    p.bet = 0; p.committed = 0; p.hasActed = false; p.raiseLocked = false; p.actedAtBet = null;
     p.lastAction = null; p.streetActions = [];
     p.wentToShowdown = false; p.investedThisHand = 0;
   });
@@ -842,14 +862,18 @@ Game.prototype.act = function (id, action, raiseTo) {
     this.players.forEach(function (q) {
       if (q.id === p.id || !self.canAct(q)) return;
       q.hasActed = false;
-      // an under-sized all-in does NOT give already-matched players a new raise right
-      q.raiseLocked = !isFullRaise && q.bet >= prevBet && q.bet > 0 ? true : false;
+      // A player who has already acted this street gets a new raise right only
+      // if the bet has grown by at least a full raise since they acted. That
+      // covers an under-sized all-in after a check (a bet below the minimum)
+      // and several short all-ins that do not add up to a full raise.
+      q.raiseLocked = q.actedAtBet !== null && (target - q.actedAtBet) < self.minRaise;
     });
   } else if (action !== "fold") {
     throw new Error("unknown action " + action);
   }
 
   p.hasActed = true;
+  p.actedAtBet = this.currentBet;
   p.lastAction = { action: action, label: label, amount: amount, street: this.stage,
                    potBefore: potBeforeAction, potAfter: this.pot() };
   p.streetActions.push(p.lastAction);
@@ -944,7 +968,7 @@ Game.prototype._dealStreet = function () {
 
 Game.prototype._resetStreet = function () {
   this.players.forEach(function (p) {
-    p.bet = 0; p.hasActed = false; p.raiseLocked = false;
+    p.bet = 0; p.hasActed = false; p.raiseLocked = false; p.actedAtBet = null;
     p.lastAction = null; p.streetActions = [];
   });
   this.currentBet = 0;
